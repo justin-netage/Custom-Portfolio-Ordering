@@ -9,19 +9,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class CPO_Admin {
 
-	/**
-	 * Supported post types to look for. The first one found is used.
-	 *
-	 * @var array
-	 */
-	private $supported_post_types = array( 'portfolio', 'developer_portfolio', 'developer-portfolio', 'project' );
-
-	/**
-	 * The resolved portfolio post type.
-	 *
-	 * @var string|null
-	 */
-	private $post_type = null;
+	const POST_TYPE = 'portfolio';
 
 	public function __construct() {
 		add_action( 'admin_menu', array( $this, 'add_menu_page' ) );
@@ -30,35 +18,12 @@ class CPO_Admin {
 	}
 
 	/**
-	 * Detect the portfolio post type registered on this site.
-	 *
-	 * @return string
-	 */
-	public function get_post_type() {
-		if ( $this->post_type ) {
-			return $this->post_type;
-		}
-
-		foreach ( $this->supported_post_types as $pt ) {
-			if ( post_type_exists( $pt ) ) {
-				$this->post_type = $pt;
-				return $this->post_type;
-			}
-		}
-
-		// Fallback — allow override via filter.
-		$this->post_type = apply_filters( 'cpo_portfolio_post_type', 'portfolio' );
-		return $this->post_type;
-	}
-
-	/**
 	 * Get all taxonomies attached to the portfolio post type.
 	 *
 	 * @return array
 	 */
 	public function get_taxonomies() {
-		$post_type  = $this->get_post_type();
-		$taxonomies = get_object_taxonomies( $post_type, 'objects' );
+		$taxonomies = get_object_taxonomies( self::POST_TYPE, 'objects' );
 
 		// Filter to hierarchical taxonomies (categories) only.
 		$filtered = array();
@@ -122,10 +87,7 @@ class CPO_Admin {
 		// Enqueue assets only on our page.
 		$this->enqueue_assets( '' );
 
-		$post_type  = $this->get_post_type();
 		$taxonomies = $this->get_taxonomies();
-
-		// Also include an "All Items (No Category)" option.
 		?>
 		<div class="wrap cpo-wrap">
 			<h1><?php esc_html_e( 'Portfolio Ordering', 'custom-portfolio-ordering' ); ?></h1>
@@ -202,12 +164,11 @@ class CPO_Admin {
 			wp_send_json_error( 'Missing parameters' );
 		}
 
-		$post_type = $this->get_post_type();
-		$meta_key  = '_cpo_order_' . $term_id;
+		$meta_key = '_cpo_order_' . $term_id;
 
 		// Get all posts in this term.
 		$args = array(
-			'post_type'      => $post_type,
+			'post_type'      => self::POST_TYPE,
 			'posts_per_page' => -1,
 			'post_status'    => array( 'publish', 'draft', 'pending', 'private' ),
 			'tax_query'      => array(

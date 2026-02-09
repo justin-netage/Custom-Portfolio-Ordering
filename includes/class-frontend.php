@@ -13,44 +13,11 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class CPO_Frontend {
 
-	/**
-	 * Supported post types (same list as admin).
-	 *
-	 * @var array
-	 */
-	private $supported_post_types = array( 'portfolio', 'developer_portfolio', 'developer-portfolio', 'project' );
-
-	/**
-	 * Resolved post type.
-	 *
-	 * @var string|null
-	 */
-	private $post_type = null;
+	const POST_TYPE = 'portfolio';
 
 	public function __construct() {
 		add_action( 'pre_get_posts', array( $this, 'modify_query' ), 99 );
 		add_filter( 'posts_clauses', array( $this, 'modify_query_clauses' ), 99, 2 );
-	}
-
-	/**
-	 * Get the portfolio post type.
-	 *
-	 * @return string
-	 */
-	private function get_post_type() {
-		if ( $this->post_type ) {
-			return $this->post_type;
-		}
-
-		foreach ( $this->supported_post_types as $pt ) {
-			if ( post_type_exists( $pt ) ) {
-				$this->post_type = $pt;
-				return $this->post_type;
-			}
-		}
-
-		$this->post_type = apply_filters( 'cpo_portfolio_post_type', 'portfolio' );
-		return $this->post_type;
 	}
 
 	/**
@@ -60,14 +27,13 @@ class CPO_Frontend {
 	 * @return bool
 	 */
 	private function is_portfolio_query( $query ) {
-		$post_type = $this->get_post_type();
-		$qpt       = $query->get( 'post_type' );
+		$qpt = $query->get( 'post_type' );
 
 		if ( is_array( $qpt ) ) {
-			return in_array( $post_type, $qpt, true );
+			return in_array( self::POST_TYPE, $qpt, true );
 		}
 
-		return $qpt === $post_type;
+		return $qpt === self::POST_TYPE;
 	}
 
 	/**
@@ -116,8 +82,7 @@ class CPO_Frontend {
 		}
 
 		// Check simple taxonomy query vars (e.g., ?portfolio_category=slug).
-		$post_type  = $this->get_post_type();
-		$taxonomies = get_object_taxonomies( $post_type );
+		$taxonomies = get_object_taxonomies( self::POST_TYPE );
 
 		foreach ( $taxonomies as $tax ) {
 			$tax_obj = get_taxonomy( $tax );
