@@ -9,7 +9,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class CPO_Admin {
 
-	const POST_TYPE = 'portfolio';
+	const POST_TYPE = 'featured_item';
 
 	public function __construct() {
 		add_action( 'admin_menu', array( $this, 'add_menu_page' ) );

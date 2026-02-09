@@ -13,7 +13,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class CPO_Frontend {
 
-	const POST_TYPE = 'portfolio';
+	const POST_TYPE = 'featured_item';
 
 	public function __construct() {
 		add_action( 'pre_get_posts', array( $this, 'modify_query' ), 99 );
