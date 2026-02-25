@@ -238,11 +238,12 @@
 	border-radius: 4px;
 }
 
-/* Grid preview button in actions bar */
+/* Grid Preview button in controls bar — pushed to the right */
 .cpo-btn-preview {
 	display: inline-flex;
 	align-items: center;
 	gap: 4px;
+	margin-left: auto;
 }
 
 .cpo-btn-preview .dashicons {
@@ -333,6 +334,28 @@ body.cpo-modal-open {
 .cpo-preview-close:hover {
 	background: #ededed;
 	color: #333;
+}
+
+/* Modal filter bar */
+.cpo-modal-filter {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 10px 20px;
+	border-bottom: 1px solid #eee;
+	background: #fff;
+	flex-shrink: 0;
+	flex-wrap: wrap;
+}
+
+.cpo-modal-filter label {
+	font-weight: 600;
+	white-space: nowrap;
+	font-size: 13px;
+}
+
+.cpo-modal-filter select {
+	min-width: 160px;
 }
 
 /* Description bar */
@@ -480,6 +503,24 @@ body.cpo-modal-open {
 	border-top: 1px solid #ddd;
 	flex-shrink: 0;
 	background: #f9f9f9;
+}
+
+/* Empty / error states inside the grid */
+.cpo-grid-empty,
+.cpo-grid-error {
+	list-style: none;
+	width: 100%;
+	padding: 40px 20px;
+	text-align: center;
+	font-size: 14px;
+}
+
+.cpo-grid-empty {
+	color: #999;
+}
+
+.cpo-grid-error {
+	color: #c00;
 }
 
 /* ─── Responsive ── */
