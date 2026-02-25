@@ -8,6 +8,7 @@
 	var $spinner    = $('#cpo-loading');
 	var currentTerm = null;
 	var currentTax  = null;
+	var currentItems = [];
 
 	/**
 	 * Show a status message.
@@ -128,6 +129,7 @@
 				return;
 			}
 
+			currentItems = items;
 			renderList(items);
 		}).fail(function () {
 			$spinner.removeClass('is-active');
@@ -162,6 +164,7 @@
 
 		html += '</ul>';
 		html += '<div class="cpo-actions">';
+		html += '<button type="button" id="cpo-preview-grid" class="button cpo-btn-preview"><span class="dashicons dashicons-screenoptions"></span> Grid Preview</button>';
 		html += '<button type="button" id="cpo-save-order" class="button button-primary">Save Order</button>';
 		html += '<span id="cpo-save-spinner" class="spinner" style="float:none;"></span>';
 		html += '</div>';
@@ -195,6 +198,9 @@
 
 		// Save button handler.
 		$('#cpo-save-order').off('click').on('click', saveOrder);
+
+		// Grid preview button handler.
+		$('#cpo-preview-grid').off('click').on('click', openPreviewModal);
 	}
 
 	/**
@@ -247,7 +253,219 @@
 		});
 	}
 
-	// Event bindings.
+	// ─── Grid Preview Modal ──────────────────────────────────────────────────
+
+	/**
+	 * Open the grid preview modal using the current table order.
+	 */
+	function openPreviewModal() {
+		if (!currentItems.length) {
+			return;
+		}
+
+		// Avoid duplicate modals.
+		if ($('#cpo-preview-overlay').length) {
+			return;
+		}
+
+		// Build ordered list from the current table DOM (respects unsaved drags).
+		var orderedItems = [];
+		$('#cpo-sortable .cpo-item').each(function () {
+			var id = parseInt($(this).data('id'), 10);
+			for (var i = 0; i < currentItems.length; i++) {
+				if (currentItems[i].id === id) {
+					orderedItems.push(currentItems[i]);
+					break;
+				}
+			}
+		});
+
+		renderGridModal(orderedItems);
+	}
+
+	/**
+	 * Build and inject the grid preview modal.
+	 */
+	function renderGridModal(items) {
+		var termName = $term.find('option:selected').text();
+
+		var html = '<div id="cpo-preview-overlay" class="cpo-preview-overlay" role="dialog" aria-modal="true" aria-label="Grid Preview">';
+		html += '<div class="cpo-preview-modal">';
+
+		// Header.
+		html += '<div class="cpo-preview-header">';
+		html += '<h2 class="cpo-preview-title">Grid Preview &mdash; ' + escHtml(termName) + '</h2>';
+		html += '<button type="button" class="cpo-preview-close" aria-label="Close">&times;</button>';
+		html += '</div>';
+
+		// Description.
+		html += '<p class="cpo-preview-desc">Drag cards to reorder, then click <strong>Save Order</strong> to apply. This mimics the front-end grid layout.</p>';
+
+		// Scrollable grid area.
+		html += '<div class="cpo-preview-grid-wrapper">';
+		html += '<ul id="cpo-grid-sortable" class="cpo-grid-sortable">';
+
+		items.forEach(function (item, index) {
+			var thumb = item.thumbnail
+				? '<img src="' + item.thumbnail + '" alt="" />'
+				: '<span class="cpo-grid-no-thumb dashicons dashicons-format-image"></span>';
+
+			html += '<li class="cpo-grid-item" data-id="' + item.id + '">';
+			html += '<div class="cpo-grid-card">';
+			html += '<div class="cpo-grid-img-wrap">' + thumb + '</div>';
+			html += '<div class="cpo-grid-meta">';
+			html += '<span class="cpo-grid-order-num">' + (index + 1) + '</span>';
+			html += '<span class="cpo-grid-title">' + escHtml(item.title) + '</span>';
+			html += '</div>';
+			html += '</div>';
+			html += '</li>';
+		});
+
+		html += '</ul>';
+		html += '</div>'; // .cpo-preview-grid-wrapper
+
+		// Footer actions.
+		html += '<div class="cpo-preview-actions">';
+		html += '<button type="button" id="cpo-grid-save-order" class="button button-primary">Save Order</button>';
+		html += '<span id="cpo-grid-save-spinner" class="spinner" style="float:none;"></span>';
+		html += '<button type="button" id="cpo-grid-cancel" class="button">Cancel</button>';
+		html += '</div>';
+
+		html += '</div>'; // .cpo-preview-modal
+		html += '</div>'; // #cpo-preview-overlay
+
+		$('body').append(html);
+		$('body').addClass('cpo-modal-open');
+
+		initGridSortable();
+
+		// Close on overlay click.
+		$('#cpo-preview-overlay').on('click', function (e) {
+			if ($(e.target).is('#cpo-preview-overlay')) {
+				closePreviewModal();
+			}
+		});
+
+		// Close/cancel buttons.
+		$('#cpo-preview-overlay').find('.cpo-preview-close').on('click', closePreviewModal);
+		$('#cpo-grid-cancel').on('click', closePreviewModal);
+
+		// Save from grid.
+		$('#cpo-grid-save-order').on('click', saveOrderFromGrid);
+
+		// Close on Escape key.
+		$(document).on('keydown.cpomodal', function (e) {
+			if (e.key === 'Escape') {
+				closePreviewModal();
+			}
+		});
+	}
+
+	/**
+	 * Close and remove the grid preview modal.
+	 */
+	function closePreviewModal() {
+		$('#cpo-preview-overlay').remove();
+		$('body').removeClass('cpo-modal-open');
+		$(document).off('keydown.cpomodal');
+	}
+
+	/**
+	 * Initialize jQuery UI Sortable on the grid.
+	 */
+	function initGridSortable() {
+		$('#cpo-grid-sortable').sortable({
+			placeholder: 'cpo-grid-placeholder',
+			forcePlaceholderSize: true,
+			cursor: 'grabbing',
+			opacity: 0.75,
+			tolerance: 'pointer',
+			start: function (e, ui) {
+				// Match placeholder height to the dragged card.
+				$('.cpo-grid-placeholder').height(ui.item.outerHeight());
+			},
+			update: function () {
+				updateGridOrderNumbers();
+			}
+		});
+	}
+
+	/**
+	 * Refresh the order-number badge on each grid card.
+	 */
+	function updateGridOrderNumbers() {
+		$('#cpo-grid-sortable .cpo-grid-item').each(function (index) {
+			$(this).find('.cpo-grid-order-num').text(index + 1);
+		});
+	}
+
+	/**
+	 * Save the grid order via AJAX and sync back to the table.
+	 */
+	function saveOrderFromGrid() {
+		var $btn     = $('#cpo-grid-save-order');
+		var $spin    = $('#cpo-grid-save-spinner');
+		var order    = [];
+
+		$('#cpo-grid-sortable .cpo-grid-item').each(function () {
+			order.push($(this).data('id'));
+		});
+
+		if (!order.length || !currentTerm) {
+			return;
+		}
+
+		$btn.prop('disabled', true);
+		$spin.addClass('is-active');
+
+		$.post(cpoData.ajaxUrl, {
+			action:   'cpo_save_order',
+			nonce:    cpoData.nonce,
+			taxonomy: currentTax,
+			term_id:  currentTerm,
+			order:    order
+		}, function (response) {
+			$btn.prop('disabled', false);
+			$spin.removeClass('is-active');
+
+			if (response.success) {
+				syncTableToGridOrder(order);
+				showStatus(response.data.message, 'success');
+				closePreviewModal();
+			} else {
+				showStatus('Error saving order.', 'error');
+				closePreviewModal();
+			}
+		}).fail(function () {
+			$btn.prop('disabled', false);
+			$spin.removeClass('is-active');
+			showStatus('Request failed. Please try again.', 'error');
+			closePreviewModal();
+		});
+	}
+
+	/**
+	 * Re-order the table rows to match the saved grid order.
+	 */
+	function syncTableToGridOrder(order) {
+		var $list   = $('#cpo-sortable');
+		var itemMap = {};
+
+		$list.find('.cpo-item').each(function () {
+			itemMap[$(this).data('id')] = $(this);
+		});
+
+		order.forEach(function (id) {
+			if (itemMap[id]) {
+				$list.append(itemMap[id]);
+			}
+		});
+
+		updateOrderNumbers();
+	}
+
+	// ─── Event bindings ───────────────────────────────────────────────────────
+
 	$taxonomy.on('change', function () {
 		loadTerms();
 		$wrapper.html('<p class="cpo-placeholder">Select a category to load items.</p>');
