@@ -100,6 +100,7 @@
 
 		if (!tax || !termId) {
 			$wrapper.html('<p class="cpo-placeholder">Select a taxonomy and category above to load items.</p>');
+			$('#cpo-preview-grid').prop('disabled', true);
 			return;
 		}
 
@@ -119,6 +120,7 @@
 
 			if (!response.success) {
 				$wrapper.html('<p class="cpo-error">Error loading items.</p>');
+				$('#cpo-preview-grid').prop('disabled', true);
 				return;
 			}
 
@@ -126,14 +128,17 @@
 
 			if (!items.length) {
 				$wrapper.html('<p class="cpo-placeholder">No portfolio items found in this category.</p>');
+				$('#cpo-preview-grid').prop('disabled', true);
 				return;
 			}
 
 			currentItems = items;
 			renderList(items);
+			$('#cpo-preview-grid').prop('disabled', false);
 		}).fail(function () {
 			$spinner.removeClass('is-active');
 			$wrapper.html('<p class="cpo-error">Request failed. Please try again.</p>');
+			$('#cpo-preview-grid').prop('disabled', true);
 		});
 	}
 
@@ -164,7 +169,6 @@
 
 		html += '</ul>';
 		html += '<div class="cpo-actions">';
-		html += '<button type="button" id="cpo-preview-grid" class="button cpo-btn-preview"><span class="dashicons dashicons-screenoptions"></span> Grid Preview</button>';
 		html += '<button type="button" id="cpo-save-order" class="button button-primary">Save Order</button>';
 		html += '<span id="cpo-save-spinner" class="spinner" style="float:none;"></span>';
 		html += '</div>';
@@ -198,9 +202,6 @@
 
 		// Save button handler.
 		$('#cpo-save-order').off('click').on('click', saveOrder);
-
-		// Grid preview button handler.
-		$('#cpo-preview-grid').off('click').on('click', openPreviewModal);
 	}
 
 	/**
@@ -289,6 +290,22 @@
 	function renderGridModal(items) {
 		var termName = $term.find('option:selected').text();
 
+		// Build taxonomy options (mirrors main select).
+		var taxOptionsHtml = '';
+		$('#cpo-taxonomy option').each(function () {
+			var sel = ($(this).val() === currentTax) ? ' selected' : '';
+			taxOptionsHtml += '<option value="' + escHtml($(this).val()) + '"' + sel + '>' + escHtml($(this).text()) + '</option>';
+		});
+
+		// Build term options for the current taxonomy.
+		var termOptionsHtml = '<option value="">— Select a category —</option>';
+		if (window.cpoTerms && window.cpoTerms[currentTax]) {
+			buildTermOptions(window.cpoTerms[currentTax]).forEach(function (opt) {
+				var sel = (String(opt.id) === String(currentTerm)) ? ' selected' : '';
+				termOptionsHtml += '<option value="' + opt.id + '"' + sel + '>' + escHtml(opt.name + ' (' + opt.count + ')') + '</option>';
+			});
+		}
+
 		var html = '<div id="cpo-preview-overlay" class="cpo-preview-overlay" role="dialog" aria-modal="true" aria-label="Grid Preview">';
 		html += '<div class="cpo-preview-modal">';
 
@@ -300,6 +317,15 @@
 
 		// Description.
 		html += '<p class="cpo-preview-desc">Drag cards to reorder, then click <strong>Save Order</strong> to apply. This mimics the front-end grid layout.</p>';
+
+		// Filter bar.
+		html += '<div class="cpo-modal-filter">';
+		html += '<label for="cpo-modal-taxonomy">Taxonomy:</label>';
+		html += '<select id="cpo-modal-taxonomy">' + taxOptionsHtml + '</select>';
+		html += '<label for="cpo-modal-term">Category:</label>';
+		html += '<select id="cpo-modal-term">' + termOptionsHtml + '</select>';
+		html += '<span id="cpo-modal-loading" class="spinner" style="float:none;"></span>';
+		html += '</div>';
 
 		// Scrollable grid area.
 		html += '<div class="cpo-preview-grid-wrapper">';
@@ -358,6 +384,109 @@
 			if (e.key === 'Escape') {
 				closePreviewModal();
 			}
+		});
+
+		// Modal filter: repopulate terms when taxonomy changes.
+		$('#cpo-modal-taxonomy').on('change', function () {
+			var newTax = $(this).val();
+			var $modalTerm = $('#cpo-modal-term');
+			$modalTerm.empty().append('<option value="">— Select a category —</option>');
+			if (window.cpoTerms && window.cpoTerms[newTax]) {
+				buildTermOptions(window.cpoTerms[newTax]).forEach(function (opt) {
+					$modalTerm.append(
+						$('<option></option>').val(opt.id).text(opt.name + ' (' + opt.count + ')')
+					);
+				});
+			}
+		});
+
+		// Modal filter: reload grid when category changes.
+		$('#cpo-modal-term').on('change', reloadGridItems);
+	}
+
+	/**
+	 * Reload the grid inside the modal for a newly selected taxonomy/term.
+	 */
+	function reloadGridItems() {
+		var newTax    = $('#cpo-modal-taxonomy').val();
+		var newTermId = $('#cpo-modal-term').val();
+		var $grid     = $('#cpo-grid-sortable');
+		var $spin     = $('#cpo-modal-loading');
+
+		if (!newTax || !newTermId) {
+			try { $grid.sortable('destroy'); } catch (e) {}
+			$grid.html('<li class="cpo-grid-empty">Select a category to load items.</li>');
+			$('#cpo-grid-save-order').prop('disabled', true);
+			return;
+		}
+
+		$spin.addClass('is-active');
+		$('#cpo-grid-save-order').prop('disabled', true);
+
+		$.post(cpoData.ajaxUrl, {
+			action:   'cpo_get_items',
+			nonce:    cpoData.nonce,
+			taxonomy: newTax,
+			term_id:  newTermId
+		}, function (response) {
+			$spin.removeClass('is-active');
+
+			if (!response.success) {
+				$grid.html('<li class="cpo-grid-error">Error loading items.</li>');
+				return;
+			}
+
+			var items = response.data.items;
+
+			// Update shared state.
+			currentTax   = newTax;
+			currentTerm  = newTermId;
+			currentItems = items;
+
+			// Sync the main page dropdowns.
+			$taxonomy.val(newTax);
+			loadTerms();
+			$term.val(newTermId);
+
+			// Update modal title.
+			var termName = $('#cpo-modal-term option:selected').text();
+			$('.cpo-preview-title').text('Grid Preview \u2014 ' + termName);
+
+			// Rebuild the grid list.
+			try { $grid.sortable('destroy'); } catch (e) {}
+
+			if (!items.length) {
+				$grid.html('<li class="cpo-grid-empty">No portfolio items found in this category.</li>');
+				return;
+			}
+
+			var html = '';
+			items.forEach(function (item, index) {
+				var thumb = item.thumbnail
+					? '<img src="' + item.thumbnail + '" alt="" />'
+					: '<span class="cpo-grid-no-thumb dashicons dashicons-format-image"></span>';
+
+				html += '<li class="cpo-grid-item" data-id="' + item.id + '">';
+				html += '<div class="cpo-grid-card">';
+				html += '<div class="cpo-grid-img-wrap">' + thumb + '</div>';
+				html += '<div class="cpo-grid-meta">';
+				html += '<span class="cpo-grid-order-num">' + (index + 1) + '</span>';
+				html += '<span class="cpo-grid-title">' + escHtml(item.title) + '</span>';
+				html += '</div>';
+				html += '</div>';
+				html += '</li>';
+			});
+
+			$grid.html(html);
+			initGridSortable();
+			$('#cpo-grid-save-order').prop('disabled', false);
+
+			// Also sync the main list.
+			renderList(items);
+			$('#cpo-preview-grid').prop('disabled', false);
+		}).fail(function () {
+			$spin.removeClass('is-active');
+			$grid.html('<li class="cpo-grid-error">Request failed. Please try again.</li>');
 		});
 	}
 
@@ -469,9 +598,13 @@
 	$taxonomy.on('change', function () {
 		loadTerms();
 		$wrapper.html('<p class="cpo-placeholder">Select a category to load items.</p>');
+		$('#cpo-preview-grid').prop('disabled', true);
 	});
 
 	$term.on('change', loadItems);
+
+	// Grid Preview button (lives in controls bar).
+	$('#cpo-preview-grid').on('click', openPreviewModal);
 
 	// Initialize on page load.
 	loadTerms();

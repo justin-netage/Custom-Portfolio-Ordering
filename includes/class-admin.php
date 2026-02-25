@@ -107,6 +107,10 @@ class CPO_Admin {
 				</select>
 
 				<span id="cpo-loading" class="spinner" style="float:none;"></span>
+
+				<button type="button" id="cpo-preview-grid" class="button cpo-btn-preview" disabled>
+					<span class="dashicons dashicons-screenoptions"></span> <?php esc_html_e( 'Grid Preview', 'custom-portfolio-ordering' ); ?>
+				</button>
 			</div>
 
 			<div id="cpo-status" class="cpo-status"></div>
