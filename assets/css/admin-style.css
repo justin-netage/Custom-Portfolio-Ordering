@@ -505,6 +505,10 @@ body.cpo-modal-open {
 	background: #f9f9f9;
 }
 
+#cpo-grid-cancel {
+	margin-left: auto;
+}
+
 /* Empty / error states inside the grid */
 .cpo-grid-empty,
 .cpo-grid-error {
