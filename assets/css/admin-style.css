@@ -238,6 +238,20 @@
 	border-radius: 4px;
 }
 
+/* Grid preview button in actions bar */
+.cpo-btn-preview {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.cpo-btn-preview .dashicons {
+	font-size: 16px;
+	width: 16px;
+	height: 16px;
+	margin-top: 1px;
+}
+
 /* Responsive */
 @media (max-width: 782px) {
 	.cpo-controls {
@@ -251,5 +265,250 @@
 
 	.cpo-col-status {
 		display: none;
+	}
+}
+
+/* ─── Grid Preview Modal ─────────────────────────────────────────────────── */
+
+body.cpo-modal-open {
+	overflow: hidden;
+}
+
+/* Full-screen overlay */
+.cpo-preview-overlay {
+	position: fixed;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.72);
+	z-index: 100000;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 24px;
+	box-sizing: border-box;
+}
+
+/* Modal container */
+.cpo-preview-modal {
+	background: #fff;
+	border-radius: 6px;
+	width: 100%;
+	max-width: 1060px;
+	max-height: 90vh;
+	display: flex;
+	flex-direction: column;
+	box-shadow: 0 12px 48px rgba(0, 0, 0, 0.35);
+	overflow: hidden;
+}
+
+/* Modal header */
+.cpo-preview-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 14px 20px;
+	border-bottom: 1px solid #ddd;
+	flex-shrink: 0;
+	background: #f9f9f9;
+}
+
+.cpo-preview-title {
+	margin: 0;
+	font-size: 17px;
+	font-weight: 600;
+	color: #1d2327;
+}
+
+.cpo-preview-close {
+	background: none;
+	border: 1px solid transparent;
+	cursor: pointer;
+	font-size: 22px;
+	line-height: 1;
+	color: #777;
+	padding: 4px 8px;
+	border-radius: 3px;
+	transition: background 0.1s ease, color 0.1s ease;
+}
+
+.cpo-preview-close:hover {
+	background: #ededed;
+	color: #333;
+}
+
+/* Description bar */
+.cpo-preview-desc {
+	margin: 0;
+	padding: 9px 20px;
+	font-size: 13px;
+	color: #666;
+	border-bottom: 1px solid #eee;
+	flex-shrink: 0;
+}
+
+/* Scrollable grid area */
+.cpo-preview-grid-wrapper {
+	flex: 1;
+	overflow-y: auto;
+	background: #f0f0f1;
+}
+
+/* ─── Sortable grid ── */
+
+.cpo-grid-sortable {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 16px;
+	padding: 20px;
+	margin: 0;
+	list-style: none;
+	align-content: flex-start;
+}
+
+/* Grid card wrapper — 4 columns by default */
+.cpo-grid-item {
+	flex: 0 0 calc(25% - 12px);
+	max-width: calc(25% - 12px);
+	cursor: grab;
+	list-style: none;
+	box-sizing: border-box;
+}
+
+.cpo-grid-item.ui-sortable-helper {
+	cursor: grabbing;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+	transform: rotate(1.5deg);
+	z-index: 9999;
+}
+
+/* Drag placeholder */
+.cpo-grid-placeholder {
+	flex: 0 0 calc(25% - 12px);
+	max-width: calc(25% - 12px);
+	border: 2px dashed #4285f4;
+	background: #e8f0fe;
+	border-radius: 4px;
+	list-style: none;
+	box-sizing: border-box;
+}
+
+/* Card */
+.cpo-grid-card {
+	background: #fff;
+	border: 1px solid #ddd;
+	border-radius: 4px;
+	overflow: hidden;
+	transition: box-shadow 0.15s ease;
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+}
+
+.cpo-grid-card:hover {
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+}
+
+/* Image area — 4:3 aspect ratio */
+.cpo-grid-img-wrap {
+	width: 100%;
+	padding-top: 75%;
+	position: relative;
+	background: #f1f1f1;
+	overflow: hidden;
+	flex-shrink: 0;
+}
+
+.cpo-grid-img-wrap img {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	display: block;
+}
+
+.cpo-grid-no-thumb {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	font-size: 42px;
+	color: #ccc;
+}
+
+/* Card footer: order badge + title */
+.cpo-grid-meta {
+	padding: 8px 10px;
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	background: #fff;
+	border-top: 1px solid #eee;
+	flex: 1;
+	min-width: 0;
+}
+
+.cpo-grid-order-num {
+	flex-shrink: 0;
+	width: 20px;
+	height: 20px;
+	line-height: 20px;
+	text-align: center;
+	background: #e2e4e7;
+	border-radius: 3px;
+	font-size: 11px;
+	font-weight: 700;
+	color: #555;
+}
+
+.cpo-grid-title {
+	font-size: 12px;
+	font-weight: 500;
+	color: #1d2327;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	flex: 1;
+	min-width: 0;
+}
+
+/* Modal footer */
+.cpo-preview-actions {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 14px 20px;
+	border-top: 1px solid #ddd;
+	flex-shrink: 0;
+	background: #f9f9f9;
+}
+
+/* ─── Responsive ── */
+
+/* 3 columns on medium viewports */
+@media (max-width: 900px) {
+	.cpo-grid-item,
+	.cpo-grid-placeholder {
+		flex: 0 0 calc(33.333% - 10.667px);
+		max-width: calc(33.333% - 10.667px);
+	}
+}
+
+/* 2 columns on small viewports */
+@media (max-width: 600px) {
+	.cpo-preview-overlay {
+		padding: 0;
+		align-items: flex-end;
+	}
+
+	.cpo-preview-modal {
+		max-height: 95vh;
+		border-radius: 6px 6px 0 0;
+		max-width: 100%;
+	}
+
+	.cpo-grid-item,
+	.cpo-grid-placeholder {
+		flex: 0 0 calc(50% - 8px);
+		max-width: calc(50% - 8px);
 	}
 }
