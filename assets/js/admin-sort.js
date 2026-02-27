@@ -151,6 +151,7 @@
 		html += '<span class="cpo-col-thumb"></span>';
 		html += '<span class="cpo-col-title">Title</span>';
 		html += '<span class="cpo-col-status">Status</span>';
+		html += '<span class="cpo-col-actions"></span>';
 		html += '</div>';
 		html += '<ul id="cpo-sortable" class="cpo-sortable">';
 
@@ -164,6 +165,7 @@
 			html += '<span class="cpo-col-thumb">' + thumb + '</span>';
 			html += '<span class="cpo-col-title">' + escHtml(item.title) + '</span>';
 			html += '<span class="cpo-col-status"><span class="cpo-status-badge cpo-status-' + item.status + '">' + item.status + '</span></span>';
+			html += '<span class="cpo-col-actions"><button type="button" class="cpo-delete-btn" data-id="' + item.id + '" title="Move to trash"><span class="dashicons dashicons-trash"></span></button></span>';
 			html += '</li>';
 		});
 
@@ -338,7 +340,7 @@
 
 			html += '<li class="cpo-grid-item" data-id="' + item.id + '">';
 			html += '<div class="cpo-grid-card">';
-			html += '<div class="cpo-grid-img-wrap">' + thumb + '</div>';
+			html += '<div class="cpo-grid-img-wrap">' + thumb + '<button type="button" class="cpo-grid-delete-btn" data-id="' + item.id + '" title="Move to trash"><span class="dashicons dashicons-trash"></span></button></div>';
 			html += '<div class="cpo-grid-meta">';
 			html += '<span class="cpo-grid-order-num">' + (index + 1) + '</span>';
 			html += '<span class="cpo-grid-title">' + escHtml(item.title) + '</span>';
@@ -468,7 +470,7 @@
 
 				html += '<li class="cpo-grid-item" data-id="' + item.id + '">';
 				html += '<div class="cpo-grid-card">';
-				html += '<div class="cpo-grid-img-wrap">' + thumb + '</div>';
+				html += '<div class="cpo-grid-img-wrap">' + thumb + '<button type="button" class="cpo-grid-delete-btn" data-id="' + item.id + '" title="Move to trash"><span class="dashicons dashicons-trash"></span></button></div>';
 				html += '<div class="cpo-grid-meta">';
 				html += '<span class="cpo-grid-order-num">' + (index + 1) + '</span>';
 				html += '<span class="cpo-grid-title">' + escHtml(item.title) + '</span>';
@@ -593,7 +595,62 @@
 		updateOrderNumbers();
 	}
 
+	// ─── Delete item ─────────────────────────────────────────────────────────
+
+	/**
+	 * Move a portfolio item to trash via AJAX.
+	 */
+	function deleteItem(postId, $itemElement) {
+		if (!window.confirm('Move this item to trash? This cannot be undone from this screen.')) {
+			return;
+		}
+
+		var $btn = $itemElement.find('.cpo-delete-btn, .cpo-grid-delete-btn');
+		$btn.prop('disabled', true);
+
+		$.post(cpoData.ajaxUrl, {
+			action:  'cpo_delete_item',
+			nonce:   cpoData.nonce,
+			post_id: postId
+		}, function (response) {
+			if (response.success) {
+				// Remove from shared state.
+				currentItems = currentItems.filter(function (item) {
+					return item.id !== postId;
+				});
+
+				// Remove from both views.
+				$('#cpo-sortable .cpo-item[data-id="' + postId + '"]').remove();
+				$('#cpo-grid-sortable .cpo-grid-item[data-id="' + postId + '"]').remove();
+				updateOrderNumbers();
+				updateGridOrderNumbers();
+
+				showStatus(response.data.message, 'success');
+			} else {
+				$btn.prop('disabled', false);
+				showStatus('Error deleting item.', 'error');
+			}
+		}).fail(function () {
+			$btn.prop('disabled', false);
+			showStatus('Request failed. Please try again.', 'error');
+		});
+	}
+
 	// ─── Event bindings ───────────────────────────────────────────────────────
+
+	// Table-view delete (delegated — list is re-rendered on each load).
+	$wrapper.on('click', '.cpo-delete-btn', function () {
+		var postId = parseInt($(this).data('id'), 10);
+		var $item  = $(this).closest('.cpo-item');
+		deleteItem(postId, $item);
+	});
+
+	// Grid-view delete (delegated — modal is created dynamically).
+	$('body').on('click', '.cpo-grid-delete-btn', function () {
+		var postId = parseInt($(this).data('id'), 10);
+		var $item  = $(this).closest('.cpo-grid-item');
+		deleteItem(postId, $item);
+	});
 
 	$taxonomy.on('change', function () {
 		loadTerms();
