@@ -16,6 +16,7 @@ class CPO_Admin {
 		add_action( 'wp_ajax_cpo_save_order', array( $this, 'ajax_save_order' ) );
 		add_action( 'wp_ajax_cpo_get_items', array( $this, 'ajax_get_items' ) );
 		add_action( 'wp_ajax_cpo_import', array( $this, 'ajax_import' ) );
+		add_action( 'wp_ajax_cpo_delete_item', array( $this, 'ajax_delete_item' ) );
 	}
 
 	/**
@@ -384,6 +385,44 @@ class CPO_Admin {
 			'items'    => $items,
 			'term_id'  => $term_id,
 			'taxonomy' => $taxonomy,
+		) );
+	}
+
+	/**
+	 * AJAX: Move a portfolio item to trash.
+	 */
+	public function ajax_delete_item() {
+		check_ajax_referer( 'cpo_sort_nonce', 'nonce' );
+
+		if ( ! current_user_can( 'delete_posts' ) ) {
+			wp_send_json_error( 'Unauthorized' );
+		}
+
+		$post_id = absint( $_POST['post_id'] ?? 0 );
+
+		if ( empty( $post_id ) ) {
+			wp_send_json_error( 'Missing parameters' );
+		}
+
+		$post = get_post( $post_id );
+
+		if ( ! $post || $post->post_type !== self::POST_TYPE ) {
+			wp_send_json_error( 'Invalid post' );
+		}
+
+		if ( ! current_user_can( 'delete_post', $post_id ) ) {
+			wp_send_json_error( 'Unauthorized' );
+		}
+
+		$result = wp_trash_post( $post_id );
+
+		if ( ! $result ) {
+			wp_send_json_error( 'Could not move item to trash' );
+		}
+
+		wp_send_json_success( array(
+			'message' => __( 'Item moved to trash.', 'custom-portfolio-ordering' ),
+			'post_id' => $post_id,
 		) );
 	}
 

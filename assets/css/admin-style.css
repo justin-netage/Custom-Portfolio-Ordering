@@ -195,6 +195,37 @@
 	color: #383d41;
 }
 
+/* Actions column */
+.cpo-col-actions {
+	width: 50px;
+	flex-shrink: 0;
+	text-align: center;
+}
+
+/* Delete button — table view */
+.cpo-delete-btn {
+	background: none;
+	border: 1px solid transparent;
+	cursor: pointer;
+	color: #b32d2e;
+	padding: 4px 6px;
+	border-radius: 3px;
+	line-height: 1;
+	transition: background 0.1s ease, color 0.1s ease;
+}
+
+.cpo-delete-btn:hover {
+	background: #f8d7da;
+	border-color: #f5c6cb;
+	color: #721c24;
+}
+
+.cpo-delete-btn .dashicons {
+	font-size: 16px;
+	width: 16px;
+	height: 16px;
+}
+
 /* Sortable placeholder */
 .cpo-sortable-placeholder {
 	height: 58px;
@@ -250,7 +281,7 @@
 	font-size: 16px;
 	width: 16px;
 	height: 16px;
-	margin-top: 1px;
+	margin-top: 5px;
 }
 
 /* Responsive */
@@ -525,6 +556,39 @@ body.cpo-modal-open {
 
 .cpo-grid-error {
 	color: #c00;
+}
+
+/* Delete button — grid view */
+.cpo-grid-delete-btn {
+	position: absolute;
+	top: 6px;
+	right: 6px;
+	background: rgba(255, 255, 255, 0.9);
+	border: 1px solid #f5c6cb;
+	color: #b32d2e;
+	cursor: pointer;
+	padding: 4px;
+	border-radius: 3px;
+	line-height: 1;
+	opacity: 0;
+	transition: opacity 0.15s ease, background 0.1s ease;
+	z-index: 10;
+}
+
+.cpo-grid-item:hover .cpo-grid-delete-btn {
+	opacity: 1;
+}
+
+.cpo-grid-delete-btn:hover {
+	background: #f8d7da;
+	color: #721c24;
+}
+
+.cpo-grid-delete-btn .dashicons {
+	font-size: 16px;
+	width: 16px;
+	height: 16px;
+	display: block;
 }
 
 /* ─── Responsive ── */
