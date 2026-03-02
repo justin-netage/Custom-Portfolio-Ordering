@@ -54,6 +54,15 @@ class CPO_Admin {
 
 		add_submenu_page(
 			'custom-portfolio-ordering',
+			__( 'Portfolio Ordering', 'custom-portfolio-ordering' ),
+			__( 'Portfolio Ordering', 'custom-portfolio-ordering' ),
+			'edit_posts',
+			'custom-portfolio-ordering',
+			array( $this, 'render_admin_page' )
+		);
+
+		add_submenu_page(
+			'custom-portfolio-ordering',
 			__( 'Import Portfolio Items', 'custom-portfolio-ordering' ),
 			__( 'Import Items', 'custom-portfolio-ordering' ),
 			'edit_posts',
