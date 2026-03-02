@@ -82,8 +82,6 @@ class CPO_Admin {
 			CPO_VERSION
 		);
 
-		$taxonomies  = $this->get_taxonomies();
-		$example_tax = ! empty( $taxonomies ) ? array_key_first( $taxonomies ) : 'your_taxonomy';
 		?>
 		<div class="wrap cpo-wrap">
 			<h1><?php esc_html_e( 'Import Portfolio Items', 'custom-portfolio-ordering' ); ?></h1>
@@ -98,13 +96,11 @@ class CPO_Admin {
 				<div class="cpo-import-format">
 					<strong><?php esc_html_e( 'Required column:', 'custom-portfolio-ordering' ); ?></strong> <code>title</code><br>
 					<strong><?php esc_html_e( 'Optional columns:', 'custom-portfolio-ordering' ); ?></strong>
-					<code>status</code>, <code>content</code>,
-					<code><?php echo esc_html( $example_tax ); ?></code>
-					<em><?php esc_html_e( '(any registered taxonomy slug)', 'custom-portfolio-ordering' ); ?></em>
-					<pre class="cpo-import-example">title,status,<?php echo esc_html( $example_tax ); ?>
-1,publish,my-category
-2,draft,another-category
-3,publish,</pre>
+					<code>thumbnail</code> <?php esc_html_e( '(image URL),', 'custom-portfolio-ordering' ); ?>
+					<code>categories</code> <?php esc_html_e( '(pipe-separated category names)', 'custom-portfolio-ordering' ); ?>
+					<pre class="cpo-import-example">title,thumbnail,categories
+Portfolio Item 1,https://example.com/photo.jpg,web-design|photography
+Portfolio Item 2,,branding</pre>
 				</div>
 
 				<div class="cpo-import-file-area">
@@ -521,6 +517,23 @@ class CPO_Admin {
 			wp_send_json_error( array( 'message' => 'CSV must include a "title" column.' ) );
 		}
 
+		$has_thumbnail  = in_array( 'thumbnail', $headers, true );
+		$has_categories = in_array( 'categories', $headers, true );
+
+		if ( $has_thumbnail ) {
+			require_once ABSPATH . 'wp-admin/includes/media.php';
+			require_once ABSPATH . 'wp-admin/includes/file.php';
+			require_once ABSPATH . 'wp-admin/includes/image.php';
+		}
+
+		// Resolve the primary hierarchical taxonomy for category assignment.
+		$primary_taxonomy = '';
+		if ( $has_categories ) {
+			$taxonomies       = $this->get_taxonomies();
+			$tax_keys         = array_keys( $taxonomies );
+			$primary_taxonomy = ! empty( $tax_keys ) ? $tax_keys[0] : '';
+		}
+
 		global $wpdb;
 
 		$created = 0;
@@ -547,9 +560,6 @@ class CPO_Admin {
 				continue;
 			}
 
-			$status  = isset( $data['status'] ) && $data['status'] !== '' ? sanitize_text_field( trim( $data['status'] ) ) : 'publish';
-			$content = isset( $data['content'] ) ? wp_kses_post( $data['content'] ) : '';
-
 			// Find existing post by exact title (any non-trash status).
 			// phpcs:ignore WordPress.DB.DirectDatabaseQuery
 			$existing_id = (int) $wpdb->get_var( $wpdb->prepare(
@@ -559,10 +569,9 @@ class CPO_Admin {
 			) );
 
 			$post_args = array(
-				'post_title'   => $title,
-				'post_content' => $content,
-				'post_status'  => $status,
-				'post_type'    => self::POST_TYPE,
+				'post_title'  => $title,
+				'post_status' => 'publish',
+				'post_type'   => self::POST_TYPE,
 			);
 
 			if ( $existing_id ) {
@@ -579,16 +588,39 @@ class CPO_Admin {
 
 			$post_id = (int) $result;
 
-			// Assign taxonomy terms from any column matching a registered taxonomy slug.
-			foreach ( $headers as $col ) {
-				if ( in_array( $col, array( 'title', 'status', 'content' ), true ) ) {
-					continue;
+			// Handle thumbnail: sideload image from URL and set as featured image.
+			if ( $has_thumbnail ) {
+				$thumbnail_url = esc_url_raw( trim( $data['thumbnail'] ?? '' ) );
+				if ( $thumbnail_url !== '' ) {
+					$attachment_id = media_sideload_image( $thumbnail_url, $post_id, null, 'id' );
+					if ( ! is_wp_error( $attachment_id ) ) {
+						set_post_thumbnail( $post_id, $attachment_id );
+					}
 				}
-				$val = trim( $data[ $col ] ?? '' );
-				if ( $val !== '' && taxonomy_exists( $col ) ) {
-					$term = get_term_by( 'slug', $val, $col );
-					if ( $term ) {
-						wp_set_object_terms( $post_id, $term->term_id, $col );
+			}
+
+			// Handle categories: pipe-separated names assigned to the primary taxonomy.
+			if ( $has_categories && $primary_taxonomy !== '' ) {
+				$cat_val = trim( $data['categories'] ?? '' );
+				if ( $cat_val !== '' ) {
+					$cat_names = array_filter( array_map( 'sanitize_text_field', explode( '|', $cat_val ) ) );
+					$term_ids  = array();
+					foreach ( $cat_names as $cat_name ) {
+						$term = get_term_by( 'name', $cat_name, $primary_taxonomy );
+						if ( ! $term ) {
+							$term = get_term_by( 'slug', sanitize_title( $cat_name ), $primary_taxonomy );
+						}
+						if ( $term ) {
+							$term_ids[] = $term->term_id;
+						} else {
+							$new_term = wp_insert_term( $cat_name, $primary_taxonomy );
+							if ( ! is_wp_error( $new_term ) ) {
+								$term_ids[] = $new_term['term_id'];
+							}
+						}
+					}
+					if ( ! empty( $term_ids ) ) {
+						wp_set_object_terms( $post_id, $term_ids, $primary_taxonomy );
 					}
 				}
 			}
