@@ -54,6 +54,15 @@ class CPO_Admin {
 
 		add_submenu_page(
 			'custom-portfolio-ordering',
+			__( 'Portfolio Ordering', 'custom-portfolio-ordering' ),
+			__( 'Portfolio Ordering', 'custom-portfolio-ordering' ),
+			'edit_posts',
+			'custom-portfolio-ordering',
+			array( $this, 'render_admin_page' )
+		);
+
+		add_submenu_page(
+			'custom-portfolio-ordering',
 			__( 'Import Portfolio Items', 'custom-portfolio-ordering' ),
 			__( 'Import Items', 'custom-portfolio-ordering' ),
 			'edit_posts',
@@ -79,6 +88,11 @@ class CPO_Admin {
 		<div class="wrap cpo-wrap">
 			<h1><?php esc_html_e( 'Import Portfolio Items', 'custom-portfolio-ordering' ); ?></h1>
 			<p class="description"><?php esc_html_e( 'Upload a CSV file to create or update portfolio items. Items are matched by title — existing items will be updated, new ones will be created.', 'custom-portfolio-ordering' ); ?></p>
+
+			<nav class="nav-tab-wrapper">
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=custom-portfolio-ordering' ) ); ?>" class="nav-tab"><?php esc_html_e( 'Ordering', 'custom-portfolio-ordering' ); ?></a>
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=cpo-import' ) ); ?>" class="nav-tab nav-tab-active"><?php esc_html_e( 'Import Items', 'custom-portfolio-ordering' ); ?></a>
+			</nav>
 
 			<div class="cpo-import-page">
 				<div class="cpo-import-format">
@@ -239,6 +253,11 @@ class CPO_Admin {
 		<div class="wrap cpo-wrap">
 			<h1><?php esc_html_e( 'Portfolio Ordering', 'custom-portfolio-ordering' ); ?></h1>
 			<p class="description"><?php esc_html_e( 'Select a category below, then drag and drop items to set a custom display order. The order is applied across the entire site.', 'custom-portfolio-ordering' ); ?></p>
+
+			<nav class="nav-tab-wrapper">
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=custom-portfolio-ordering' ) ); ?>" class="nav-tab nav-tab-active"><?php esc_html_e( 'Ordering', 'custom-portfolio-ordering' ); ?></a>
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=cpo-import' ) ); ?>" class="nav-tab"><?php esc_html_e( 'Import Items', 'custom-portfolio-ordering' ); ?></a>
+			</nav>
 
 			<div class="cpo-controls">
 				<label for="cpo-taxonomy"><?php esc_html_e( 'Taxonomy:', 'custom-portfolio-ordering' ); ?></label>
