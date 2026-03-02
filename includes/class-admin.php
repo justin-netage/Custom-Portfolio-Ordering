@@ -15,6 +15,7 @@ class CPO_Admin {
 		add_action( 'admin_menu', array( $this, 'add_menu_page' ) );
 		add_action( 'wp_ajax_cpo_save_order', array( $this, 'ajax_save_order' ) );
 		add_action( 'wp_ajax_cpo_get_items', array( $this, 'ajax_get_items' ) );
+		add_action( 'wp_ajax_cpo_import', array( $this, 'ajax_import' ) );
 		add_action( 'wp_ajax_cpo_delete_item', array( $this, 'ajax_delete_item' ) );
 	}
 
@@ -38,7 +39,7 @@ class CPO_Admin {
 	}
 
 	/**
-	 * Register the admin menu page.
+	 * Register the admin menu page and subpages.
 	 */
 	public function add_menu_page() {
 		add_menu_page(
@@ -50,6 +51,151 @@ class CPO_Admin {
 			'dashicons-sort',
 			26
 		);
+
+		add_submenu_page(
+			'custom-portfolio-ordering',
+			__( 'Import Portfolio Items', 'custom-portfolio-ordering' ),
+			__( 'Import Items', 'custom-portfolio-ordering' ),
+			'edit_posts',
+			'cpo-import',
+			array( $this, 'render_import_page' )
+		);
+	}
+
+	/**
+	 * Render the Import Items admin page.
+	 */
+	public function render_import_page() {
+		wp_enqueue_style(
+			'cpo-admin-style',
+			CPO_PLUGIN_URL . 'assets/css/admin-style.css',
+			array(),
+			CPO_VERSION
+		);
+
+		$taxonomies  = $this->get_taxonomies();
+		$example_tax = ! empty( $taxonomies ) ? array_key_first( $taxonomies ) : 'your_taxonomy';
+		?>
+		<div class="wrap cpo-wrap">
+			<h1><?php esc_html_e( 'Import Portfolio Items', 'custom-portfolio-ordering' ); ?></h1>
+			<p class="description"><?php esc_html_e( 'Upload a CSV file to create or update portfolio items. Items are matched by title — existing items will be updated, new ones will be created.', 'custom-portfolio-ordering' ); ?></p>
+
+			<div class="cpo-import-page">
+				<div class="cpo-import-format">
+					<strong><?php esc_html_e( 'Required column:', 'custom-portfolio-ordering' ); ?></strong> <code>title</code><br>
+					<strong><?php esc_html_e( 'Optional columns:', 'custom-portfolio-ordering' ); ?></strong>
+					<code>status</code>, <code>content</code>,
+					<code><?php echo esc_html( $example_tax ); ?></code>
+					<em><?php esc_html_e( '(any registered taxonomy slug)', 'custom-portfolio-ordering' ); ?></em>
+					<pre class="cpo-import-example">title,status,<?php echo esc_html( $example_tax ); ?>
+1,publish,my-category
+2,draft,another-category
+3,publish,</pre>
+				</div>
+
+				<div class="cpo-import-file-area">
+					<label class="cpo-file-label">
+						<span class="dashicons dashicons-upload"></span>
+						<?php esc_html_e( 'Choose CSV File', 'custom-portfolio-ordering' ); ?>
+						<input type="file" id="cpo-csv-file" accept=".csv,text/csv" style="position:absolute;opacity:0;width:0;height:0;">
+					</label>
+					<span id="cpo-file-name" class="cpo-file-name"><?php esc_html_e( 'No file chosen', 'custom-portfolio-ordering' ); ?></span>
+				</div>
+
+				<p>
+					<button type="button" id="cpo-import-submit" class="button button-primary" disabled>
+						<?php esc_html_e( 'Import Items', 'custom-portfolio-ordering' ); ?>
+					</button>
+					<span id="cpo-import-spinner" class="spinner" style="float:none;vertical-align:middle;"></span>
+				</p>
+
+				<div id="cpo-import-results" class="cpo-import-results" style="display:none;"></div>
+			</div>
+		</div>
+
+		<script>
+		(function ($) {
+			var nonce   = <?php echo wp_json_encode( wp_create_nonce( 'cpo_sort_nonce' ) ); ?>;
+			var ajaxUrl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
+
+			function escHtml( str ) {
+				return $( '<div>' ).text( String( str ) ).html();
+			}
+
+			$( '#cpo-csv-file' ).on( 'change', function () {
+				var file = this.files[0];
+				if ( file ) {
+					$( '#cpo-file-name' ).text( file.name );
+					$( '#cpo-import-submit' ).prop( 'disabled', false );
+				} else {
+					$( '#cpo-file-name' ).text( 'No file chosen' );
+					$( '#cpo-import-submit' ).prop( 'disabled', true );
+				}
+			} );
+
+			$( '#cpo-import-submit' ).on( 'click', function () {
+				var fileInput = $( '#cpo-csv-file' )[0];
+				if ( ! fileInput.files.length ) return;
+
+				var formData = new FormData();
+				formData.append( 'action', 'cpo_import' );
+				formData.append( 'nonce', nonce );
+				formData.append( 'csv_file', fileInput.files[0] );
+
+				$( '#cpo-import-submit' ).prop( 'disabled', true );
+				$( '#cpo-import-spinner' ).addClass( 'is-active' );
+				$( '#cpo-import-results' ).hide();
+
+				$.ajax( {
+					url: ajaxUrl,
+					type: 'POST',
+					data: formData,
+					processData: false,
+					contentType: false,
+					success: function ( response ) {
+						$( '#cpo-import-spinner' ).removeClass( 'is-active' );
+
+						if ( ! response.success ) {
+							var msg = ( response.data && response.data.message ) ? response.data.message : 'Import failed.';
+							$( '#cpo-import-results' ).html( '<p class="cpo-import-error">' + escHtml( msg ) + '</p>' ).show();
+							$( '#cpo-import-submit' ).prop( 'disabled', false );
+							return;
+						}
+
+						var d    = response.data;
+						var html = '<p class="cpo-import-success">Import complete!</p>';
+						html += '<ul class="cpo-import-summary">';
+						html += '<li><span class="dashicons dashicons-yes-alt"></span> ' + d.created + ' item' + ( d.created !== 1 ? 's' : '' ) + ' created</li>';
+						html += '<li><span class="dashicons dashicons-update-alt"></span> ' + d.updated + ' item' + ( d.updated !== 1 ? 's' : '' ) + ' updated</li>';
+						if ( d.skipped ) {
+							html += '<li><span class="dashicons dashicons-minus"></span> ' + d.skipped + ' row' + ( d.skipped !== 1 ? 's' : '' ) + ' skipped</li>';
+						}
+						html += '</ul>';
+
+						if ( d.errors && d.errors.length ) {
+							html += '<div class="cpo-import-errors"><strong>Errors:</strong><ul>';
+							$.each( d.errors, function ( i, err ) {
+								html += '<li>' + escHtml( err ) + '</li>';
+							} );
+							html += '</ul></div>';
+						}
+
+						$( '#cpo-import-results' ).html( html ).show();
+						// Reset for another import.
+						$( '#cpo-import-submit' ).prop( 'disabled', true );
+						$( '#cpo-csv-file' ).val( '' );
+						$( '#cpo-file-name' ).text( 'No file chosen' );
+					},
+					error: function () {
+						$( '#cpo-import-spinner' ).removeClass( 'is-active' );
+						$( '#cpo-import-results' ).html( '<p class="cpo-import-error">A server error occurred. Please try again.</p>' ).show();
+						$( '#cpo-import-submit' ).prop( 'disabled', false );
+					}
+				} );
+			} );
+		}( jQuery ));
+		</script>
+		<?php
 	}
 
 	/**
@@ -313,6 +459,135 @@ class CPO_Admin {
 				__( 'Order saved for %d items.', 'custom-portfolio-ordering' ),
 				count( $order )
 			),
+		) );
+	}
+
+	/**
+	 * AJAX: Import portfolio items from a CSV file.
+	 *
+	 * Matches rows to existing posts by title. Existing posts are updated;
+	 * unmatched rows create new posts. Any column whose name matches a
+	 * registered taxonomy is treated as a term slug assignment for that taxonomy.
+	 *
+	 * Required CSV column : title
+	 * Optional CSV columns: status, content, <taxonomy_slug>
+	 */
+	public function ajax_import() {
+		check_ajax_referer( 'cpo_sort_nonce', 'nonce' );
+
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			wp_send_json_error( array( 'message' => 'Permission denied.' ) );
+		}
+
+		if ( empty( $_FILES['csv_file'] ) || (int) $_FILES['csv_file']['error'] !== UPLOAD_ERR_OK ) {
+			wp_send_json_error( array( 'message' => 'No valid file uploaded.' ) );
+		}
+
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+		$tmp_path = $_FILES['csv_file']['tmp_name'];
+		$handle   = fopen( $tmp_path, 'r' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		if ( ! $handle ) {
+			wp_send_json_error( array( 'message' => 'Could not read the uploaded file.' ) );
+		}
+
+		$headers = fgetcsv( $handle );
+		if ( ! $headers ) {
+			fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+			wp_send_json_error( array( 'message' => 'The CSV file appears to be empty.' ) );
+		}
+		$headers = array_map( 'trim', $headers );
+
+		if ( ! in_array( 'title', $headers, true ) ) {
+			fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+			wp_send_json_error( array( 'message' => 'CSV must include a "title" column.' ) );
+		}
+
+		global $wpdb;
+
+		$created = 0;
+		$updated = 0;
+		$skipped = 0;
+		$errors  = array();
+
+		while ( ( $row = fgetcsv( $handle ) ) !== false ) {
+			// Skip blank rows.
+			if ( count( $row ) === 1 && trim( $row[0] ) === '' ) {
+				continue;
+			}
+
+			// Pad short rows to match header count.
+			while ( count( $row ) < count( $headers ) ) {
+				$row[] = '';
+			}
+
+			$data  = array_combine( $headers, array_slice( $row, 0, count( $headers ) ) );
+			$title = sanitize_text_field( trim( $data['title'] ) );
+
+			if ( $title === '' ) {
+				$skipped++;
+				continue;
+			}
+
+			$status  = isset( $data['status'] ) && $data['status'] !== '' ? sanitize_text_field( trim( $data['status'] ) ) : 'publish';
+			$content = isset( $data['content'] ) ? wp_kses_post( $data['content'] ) : '';
+
+			// Find existing post by exact title (any non-trash status).
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			$existing_id = (int) $wpdb->get_var( $wpdb->prepare(
+				"SELECT ID FROM {$wpdb->posts} WHERE post_title = %s AND post_type = %s AND post_status != 'trash' LIMIT 1",
+				$title,
+				self::POST_TYPE
+			) );
+
+			$post_args = array(
+				'post_title'   => $title,
+				'post_content' => $content,
+				'post_status'  => $status,
+				'post_type'    => self::POST_TYPE,
+			);
+
+			if ( $existing_id ) {
+				$post_args['ID'] = $existing_id;
+				$result          = wp_update_post( $post_args, true );
+			} else {
+				$result = wp_insert_post( $post_args, true );
+			}
+
+			if ( is_wp_error( $result ) ) {
+				$errors[] = '"' . $title . '": ' . $result->get_error_message();
+				continue;
+			}
+
+			$post_id = (int) $result;
+
+			// Assign taxonomy terms from any column matching a registered taxonomy slug.
+			foreach ( $headers as $col ) {
+				if ( in_array( $col, array( 'title', 'status', 'content' ), true ) ) {
+					continue;
+				}
+				$val = trim( $data[ $col ] ?? '' );
+				if ( $val !== '' && taxonomy_exists( $col ) ) {
+					$term = get_term_by( 'slug', $val, $col );
+					if ( $term ) {
+						wp_set_object_terms( $post_id, $term->term_id, $col );
+					}
+				}
+			}
+
+			if ( $existing_id ) {
+				$updated++;
+			} else {
+				$created++;
+			}
+		}
+
+		fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+
+		wp_send_json_success( array(
+			'created' => $created,
+			'updated' => $updated,
+			'skipped' => $skipped,
+			'errors'  => $errors,
 		) );
 	}
 }
