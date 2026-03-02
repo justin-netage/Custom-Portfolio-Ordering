@@ -38,7 +38,7 @@ class CPO_Admin {
 	}
 
 	/**
-	 * Register the admin menu page.
+	 * Register the admin menu page and subpages.
 	 */
 	public function add_menu_page() {
 		add_menu_page(
@@ -50,6 +50,151 @@ class CPO_Admin {
 			'dashicons-sort',
 			26
 		);
+
+		add_submenu_page(
+			'custom-portfolio-ordering',
+			__( 'Import Portfolio Items', 'custom-portfolio-ordering' ),
+			__( 'Import Items', 'custom-portfolio-ordering' ),
+			'edit_posts',
+			'cpo-import',
+			array( $this, 'render_import_page' )
+		);
+	}
+
+	/**
+	 * Render the Import Items admin page.
+	 */
+	public function render_import_page() {
+		wp_enqueue_style(
+			'cpo-admin-style',
+			CPO_PLUGIN_URL . 'assets/css/admin-style.css',
+			array(),
+			CPO_VERSION
+		);
+
+		$taxonomies  = $this->get_taxonomies();
+		$example_tax = ! empty( $taxonomies ) ? array_key_first( $taxonomies ) : 'your_taxonomy';
+		?>
+		<div class="wrap cpo-wrap">
+			<h1><?php esc_html_e( 'Import Portfolio Items', 'custom-portfolio-ordering' ); ?></h1>
+			<p class="description"><?php esc_html_e( 'Upload a CSV file to create or update portfolio items. Items are matched by title — existing items will be updated, new ones will be created.', 'custom-portfolio-ordering' ); ?></p>
+
+			<div class="cpo-import-page">
+				<div class="cpo-import-format">
+					<strong><?php esc_html_e( 'Required column:', 'custom-portfolio-ordering' ); ?></strong> <code>title</code><br>
+					<strong><?php esc_html_e( 'Optional columns:', 'custom-portfolio-ordering' ); ?></strong>
+					<code>status</code>, <code>content</code>,
+					<code><?php echo esc_html( $example_tax ); ?></code>
+					<em><?php esc_html_e( '(any registered taxonomy slug)', 'custom-portfolio-ordering' ); ?></em>
+					<pre class="cpo-import-example">title,status,<?php echo esc_html( $example_tax ); ?>
+1,publish,my-category
+2,draft,another-category
+3,publish,</pre>
+				</div>
+
+				<div class="cpo-import-file-area">
+					<label class="cpo-file-label">
+						<span class="dashicons dashicons-upload"></span>
+						<?php esc_html_e( 'Choose CSV File', 'custom-portfolio-ordering' ); ?>
+						<input type="file" id="cpo-csv-file" accept=".csv,text/csv" style="position:absolute;opacity:0;width:0;height:0;">
+					</label>
+					<span id="cpo-file-name" class="cpo-file-name"><?php esc_html_e( 'No file chosen', 'custom-portfolio-ordering' ); ?></span>
+				</div>
+
+				<p>
+					<button type="button" id="cpo-import-submit" class="button button-primary" disabled>
+						<?php esc_html_e( 'Import Items', 'custom-portfolio-ordering' ); ?>
+					</button>
+					<span id="cpo-import-spinner" class="spinner" style="float:none;vertical-align:middle;"></span>
+				</p>
+
+				<div id="cpo-import-results" class="cpo-import-results" style="display:none;"></div>
+			</div>
+		</div>
+
+		<script>
+		(function ($) {
+			var nonce   = <?php echo wp_json_encode( wp_create_nonce( 'cpo_sort_nonce' ) ); ?>;
+			var ajaxUrl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
+
+			function escHtml( str ) {
+				return $( '<div>' ).text( String( str ) ).html();
+			}
+
+			$( '#cpo-csv-file' ).on( 'change', function () {
+				var file = this.files[0];
+				if ( file ) {
+					$( '#cpo-file-name' ).text( file.name );
+					$( '#cpo-import-submit' ).prop( 'disabled', false );
+				} else {
+					$( '#cpo-file-name' ).text( 'No file chosen' );
+					$( '#cpo-import-submit' ).prop( 'disabled', true );
+				}
+			} );
+
+			$( '#cpo-import-submit' ).on( 'click', function () {
+				var fileInput = $( '#cpo-csv-file' )[0];
+				if ( ! fileInput.files.length ) return;
+
+				var formData = new FormData();
+				formData.append( 'action', 'cpo_import' );
+				formData.append( 'nonce', nonce );
+				formData.append( 'csv_file', fileInput.files[0] );
+
+				$( '#cpo-import-submit' ).prop( 'disabled', true );
+				$( '#cpo-import-spinner' ).addClass( 'is-active' );
+				$( '#cpo-import-results' ).hide();
+
+				$.ajax( {
+					url: ajaxUrl,
+					type: 'POST',
+					data: formData,
+					processData: false,
+					contentType: false,
+					success: function ( response ) {
+						$( '#cpo-import-spinner' ).removeClass( 'is-active' );
+
+						if ( ! response.success ) {
+							var msg = ( response.data && response.data.message ) ? response.data.message : 'Import failed.';
+							$( '#cpo-import-results' ).html( '<p class="cpo-import-error">' + escHtml( msg ) + '</p>' ).show();
+							$( '#cpo-import-submit' ).prop( 'disabled', false );
+							return;
+						}
+
+						var d    = response.data;
+						var html = '<p class="cpo-import-success">Import complete!</p>';
+						html += '<ul class="cpo-import-summary">';
+						html += '<li><span class="dashicons dashicons-yes-alt"></span> ' + d.created + ' item' + ( d.created !== 1 ? 's' : '' ) + ' created</li>';
+						html += '<li><span class="dashicons dashicons-update-alt"></span> ' + d.updated + ' item' + ( d.updated !== 1 ? 's' : '' ) + ' updated</li>';
+						if ( d.skipped ) {
+							html += '<li><span class="dashicons dashicons-minus"></span> ' + d.skipped + ' row' + ( d.skipped !== 1 ? 's' : '' ) + ' skipped</li>';
+						}
+						html += '</ul>';
+
+						if ( d.errors && d.errors.length ) {
+							html += '<div class="cpo-import-errors"><strong>Errors:</strong><ul>';
+							$.each( d.errors, function ( i, err ) {
+								html += '<li>' + escHtml( err ) + '</li>';
+							} );
+							html += '</ul></div>';
+						}
+
+						$( '#cpo-import-results' ).html( html ).show();
+						// Reset for another import.
+						$( '#cpo-import-submit' ).prop( 'disabled', true );
+						$( '#cpo-csv-file' ).val( '' );
+						$( '#cpo-file-name' ).text( 'No file chosen' );
+					},
+					error: function () {
+						$( '#cpo-import-spinner' ).removeClass( 'is-active' );
+						$( '#cpo-import-results' ).html( '<p class="cpo-import-error">A server error occurred. Please try again.</p>' ).show();
+						$( '#cpo-import-submit' ).prop( 'disabled', false );
+					}
+				} );
+			} );
+		}( jQuery ));
+		</script>
+		<?php
 	}
 
 	/**
@@ -111,10 +256,6 @@ class CPO_Admin {
 
 				<button type="button" id="cpo-preview-grid" class="button cpo-btn-preview" disabled>
 					<span class="dashicons dashicons-screenoptions"></span> <?php esc_html_e( 'Grid Preview', 'custom-portfolio-ordering' ); ?>
-				</button>
-
-				<button type="button" id="cpo-import-btn" class="button">
-					<span class="dashicons dashicons-upload"></span> <?php esc_html_e( 'Import Items', 'custom-portfolio-ordering' ); ?>
 				</button>
 			</div>
 

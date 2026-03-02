@@ -558,22 +558,11 @@ body.cpo-modal-open {
 	}
 }
 
-/* ── Import modal ──────────────────────────────────────────────────────────── */
+/* ── Import page ───────────────────────────────────────────────────────────── */
 
-.cpo-import-modal {
-	max-width: 560px;
-}
-
-.cpo-import-body {
-	padding: 20px;
-	overflow-y: auto;
-	flex: 1;
-}
-
-.cpo-import-body > p {
-	margin: 0 0 16px;
-	color: #444;
-	line-height: 1.5;
+.cpo-import-page {
+	max-width: 640px;
+	margin-top: 20px;
 }
 
 .cpo-import-format {
