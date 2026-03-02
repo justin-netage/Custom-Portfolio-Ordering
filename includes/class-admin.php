@@ -15,6 +15,7 @@ class CPO_Admin {
 		add_action( 'admin_menu', array( $this, 'add_menu_page' ) );
 		add_action( 'wp_ajax_cpo_save_order', array( $this, 'ajax_save_order' ) );
 		add_action( 'wp_ajax_cpo_get_items', array( $this, 'ajax_get_items' ) );
+		add_action( 'wp_ajax_cpo_import', array( $this, 'ajax_import' ) );
 	}
 
 	/**
@@ -110,6 +111,10 @@ class CPO_Admin {
 
 				<button type="button" id="cpo-preview-grid" class="button cpo-btn-preview" disabled>
 					<span class="dashicons dashicons-screenoptions"></span> <?php esc_html_e( 'Grid Preview', 'custom-portfolio-ordering' ); ?>
+				</button>
+
+				<button type="button" id="cpo-import-btn" class="button">
+					<span class="dashicons dashicons-upload"></span> <?php esc_html_e( 'Import Items', 'custom-portfolio-ordering' ); ?>
 				</button>
 			</div>
 
@@ -274,6 +279,135 @@ class CPO_Admin {
 				__( 'Order saved for %d items.', 'custom-portfolio-ordering' ),
 				count( $order )
 			),
+		) );
+	}
+
+	/**
+	 * AJAX: Import portfolio items from a CSV file.
+	 *
+	 * Matches rows to existing posts by title. Existing posts are updated;
+	 * unmatched rows create new posts. Any column whose name matches a
+	 * registered taxonomy is treated as a term slug assignment for that taxonomy.
+	 *
+	 * Required CSV column : title
+	 * Optional CSV columns: status, content, <taxonomy_slug>
+	 */
+	public function ajax_import() {
+		check_ajax_referer( 'cpo_sort_nonce', 'nonce' );
+
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			wp_send_json_error( array( 'message' => 'Permission denied.' ) );
+		}
+
+		if ( empty( $_FILES['csv_file'] ) || (int) $_FILES['csv_file']['error'] !== UPLOAD_ERR_OK ) {
+			wp_send_json_error( array( 'message' => 'No valid file uploaded.' ) );
+		}
+
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+		$tmp_path = $_FILES['csv_file']['tmp_name'];
+		$handle   = fopen( $tmp_path, 'r' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		if ( ! $handle ) {
+			wp_send_json_error( array( 'message' => 'Could not read the uploaded file.' ) );
+		}
+
+		$headers = fgetcsv( $handle );
+		if ( ! $headers ) {
+			fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+			wp_send_json_error( array( 'message' => 'The CSV file appears to be empty.' ) );
+		}
+		$headers = array_map( 'trim', $headers );
+
+		if ( ! in_array( 'title', $headers, true ) ) {
+			fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+			wp_send_json_error( array( 'message' => 'CSV must include a "title" column.' ) );
+		}
+
+		global $wpdb;
+
+		$created = 0;
+		$updated = 0;
+		$skipped = 0;
+		$errors  = array();
+
+		while ( ( $row = fgetcsv( $handle ) ) !== false ) {
+			// Skip blank rows.
+			if ( count( $row ) === 1 && trim( $row[0] ) === '' ) {
+				continue;
+			}
+
+			// Pad short rows to match header count.
+			while ( count( $row ) < count( $headers ) ) {
+				$row[] = '';
+			}
+
+			$data  = array_combine( $headers, array_slice( $row, 0, count( $headers ) ) );
+			$title = sanitize_text_field( trim( $data['title'] ) );
+
+			if ( $title === '' ) {
+				$skipped++;
+				continue;
+			}
+
+			$status  = isset( $data['status'] ) && $data['status'] !== '' ? sanitize_text_field( trim( $data['status'] ) ) : 'publish';
+			$content = isset( $data['content'] ) ? wp_kses_post( $data['content'] ) : '';
+
+			// Find existing post by exact title (any non-trash status).
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			$existing_id = (int) $wpdb->get_var( $wpdb->prepare(
+				"SELECT ID FROM {$wpdb->posts} WHERE post_title = %s AND post_type = %s AND post_status != 'trash' LIMIT 1",
+				$title,
+				self::POST_TYPE
+			) );
+
+			$post_args = array(
+				'post_title'   => $title,
+				'post_content' => $content,
+				'post_status'  => $status,
+				'post_type'    => self::POST_TYPE,
+			);
+
+			if ( $existing_id ) {
+				$post_args['ID'] = $existing_id;
+				$result          = wp_update_post( $post_args, true );
+			} else {
+				$result = wp_insert_post( $post_args, true );
+			}
+
+			if ( is_wp_error( $result ) ) {
+				$errors[] = '"' . $title . '": ' . $result->get_error_message();
+				continue;
+			}
+
+			$post_id = (int) $result;
+
+			// Assign taxonomy terms from any column matching a registered taxonomy slug.
+			foreach ( $headers as $col ) {
+				if ( in_array( $col, array( 'title', 'status', 'content' ), true ) ) {
+					continue;
+				}
+				$val = trim( $data[ $col ] ?? '' );
+				if ( $val !== '' && taxonomy_exists( $col ) ) {
+					$term = get_term_by( 'slug', $val, $col );
+					if ( $term ) {
+						wp_set_object_terms( $post_id, $term->term_id, $col );
+					}
+				}
+			}
+
+			if ( $existing_id ) {
+				$updated++;
+			} else {
+				$created++;
+			}
+		}
+
+		fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+
+		wp_send_json_success( array(
+			'created' => $created,
+			'updated' => $updated,
+			'skipped' => $skipped,
+			'errors'  => $errors,
 		) );
 	}
 }

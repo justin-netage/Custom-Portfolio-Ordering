@@ -593,6 +593,159 @@
 		updateOrderNumbers();
 	}
 
+	// ─── Import modal ─────────────────────────────────────────────────────────
+
+	/**
+	 * Open the CSV import modal.
+	 */
+	function openImportModal() {
+		if ( $( '#cpo-import-overlay' ).length ) return;
+
+		// Build a representative example using the first known taxonomy.
+		var exampleTax = 'your_taxonomy';
+		if ( window.cpoTerms ) {
+			var taxKeys = Object.keys( window.cpoTerms );
+			if ( taxKeys.length ) exampleTax = taxKeys[0];
+		}
+
+		var html = '<div id="cpo-import-overlay" class="cpo-preview-overlay" role="dialog" aria-modal="true" aria-label="Import Portfolio Items">';
+		html += '<div class="cpo-preview-modal cpo-import-modal">';
+
+		html += '<div class="cpo-preview-header">';
+		html += '<h2 class="cpo-preview-title">Import Portfolio Items</h2>';
+		html += '<button type="button" class="cpo-preview-close" aria-label="Close">&times;</button>';
+		html += '</div>';
+
+		html += '<div class="cpo-import-body">';
+		html += '<p>Upload a CSV file to create or update portfolio items. Items are matched by <strong>title</strong> — existing items will be updated, new ones will be created.</p>';
+
+		html += '<div class="cpo-import-format">';
+		html += '<strong>Required column:</strong> <code>title</code><br>';
+		html += '<strong>Optional columns:</strong> <code>status</code>, <code>content</code>, <code>' + escHtml( exampleTax ) + '</code> <em>(any registered taxonomy slug)</em>';
+		html += '<pre class="cpo-import-example">title,status,' + escHtml( exampleTax ) + '\n1,publish,my-category\n2,draft,another-category\n3,publish,</pre>';
+		html += '</div>';
+
+		html += '<div class="cpo-import-file-area">';
+		html += '<label class="cpo-file-label"><span class="dashicons dashicons-upload"></span> Choose CSV File';
+		html += '<input type="file" id="cpo-csv-file" accept=".csv,text/csv" style="position:absolute;opacity:0;width:0;height:0;">';
+		html += '</label>';
+		html += '<span id="cpo-file-name" class="cpo-file-name">No file chosen</span>';
+		html += '</div>';
+
+		html += '<div id="cpo-import-results" class="cpo-import-results" style="display:none;"></div>';
+		html += '</div>';
+
+		html += '<div class="cpo-preview-actions">';
+		html += '<button type="button" id="cpo-import-submit" class="button button-primary" disabled>Import</button>';
+		html += '<span id="cpo-import-spinner" class="spinner" style="float:none;"></span>';
+		html += '<button type="button" id="cpo-import-cancel" class="button">Cancel</button>';
+		html += '</div>';
+
+		html += '</div></div>';
+
+		$( 'body' ).append( html );
+		$( 'body' ).addClass( 'cpo-modal-open' );
+
+		// File input change.
+		$( '#cpo-csv-file' ).on( 'change', function () {
+			var file = this.files[0];
+			if ( file ) {
+				$( '#cpo-file-name' ).text( file.name );
+				$( '#cpo-import-submit' ).prop( 'disabled', false );
+			} else {
+				$( '#cpo-file-name' ).text( 'No file chosen' );
+				$( '#cpo-import-submit' ).prop( 'disabled', true );
+			}
+		} );
+
+		$( '#cpo-import-submit' ).on( 'click', submitImport );
+
+		$( '#cpo-import-overlay' ).find( '.cpo-preview-close' ).on( 'click', closeImportModal );
+		$( '#cpo-import-cancel' ).on( 'click', closeImportModal );
+		$( '#cpo-import-overlay' ).on( 'click', function ( e ) {
+			if ( $( e.target ).is( '#cpo-import-overlay' ) ) closeImportModal();
+		} );
+		$( document ).on( 'keydown.cpoimport', function ( e ) {
+			if ( e.key === 'Escape' ) closeImportModal();
+		} );
+	}
+
+	/**
+	 * Submit the CSV file to the import AJAX endpoint.
+	 */
+	function submitImport() {
+		var fileInput = $( '#cpo-csv-file' )[0];
+		if ( ! fileInput.files.length ) return;
+
+		var formData = new FormData();
+		formData.append( 'action', 'cpo_import' );
+		formData.append( 'nonce', cpoData.nonce );
+		formData.append( 'csv_file', fileInput.files[0] );
+
+		$( '#cpo-import-submit' ).prop( 'disabled', true );
+		$( '#cpo-import-spinner' ).addClass( 'is-active' );
+		$( '#cpo-import-results' ).hide();
+
+		$.ajax( {
+			url: cpoData.ajaxUrl,
+			type: 'POST',
+			data: formData,
+			processData: false,
+			contentType: false,
+			success: function ( response ) {
+				$( '#cpo-import-spinner' ).removeClass( 'is-active' );
+
+				if ( ! response.success ) {
+					var msg = ( response.data && response.data.message ) ? response.data.message : 'Import failed.';
+					$( '#cpo-import-results' ).html( '<p class="cpo-import-error">' + escHtml( msg ) + '</p>' ).show();
+					$( '#cpo-import-submit' ).prop( 'disabled', false );
+					return;
+				}
+
+				var d    = response.data;
+				var html = '<p class="cpo-import-success">Import complete!</p>';
+				html += '<ul class="cpo-import-summary">';
+				html += '<li><span class="dashicons dashicons-yes-alt"></span> ' + d.created + ' item' + ( d.created !== 1 ? 's' : '' ) + ' created</li>';
+				html += '<li><span class="dashicons dashicons-update-alt"></span> ' + d.updated + ' item' + ( d.updated !== 1 ? 's' : '' ) + ' updated</li>';
+				if ( d.skipped ) {
+					html += '<li><span class="dashicons dashicons-minus"></span> ' + d.skipped + ' row' + ( d.skipped !== 1 ? 's' : '' ) + ' skipped</li>';
+				}
+				html += '</ul>';
+
+				if ( d.errors && d.errors.length ) {
+					html += '<div class="cpo-import-errors"><strong>Errors:</strong><ul>';
+					$.each( d.errors, function ( i, err ) {
+						html += '<li>' + escHtml( err ) + '</li>';
+					} );
+					html += '</ul></div>';
+				}
+
+				$( '#cpo-import-results' ).html( html ).show();
+				$( '#cpo-import-submit' ).hide();
+				$( '#cpo-import-cancel' ).text( 'Close' );
+
+				// Refresh the list if items changed and a term is currently selected.
+				if ( ( d.created || d.updated ) && currentTerm ) {
+					loadItems();
+				}
+			},
+			error: function () {
+				$( '#cpo-import-spinner' ).removeClass( 'is-active' );
+				$( '#cpo-import-results' ).html( '<p class="cpo-import-error">A server error occurred. Please try again.</p>' ).show();
+				$( '#cpo-import-submit' ).prop( 'disabled', false );
+			}
+		} );
+	}
+
+	/**
+	 * Close and remove the import modal.
+	 */
+	function closeImportModal() {
+		$( '#cpo-import-overlay' ).remove();
+		$( 'body' ).removeClass( 'cpo-modal-open' );
+		$( document ).off( 'keydown.cpoimport' );
+	}
+
 	// ─── Event bindings ───────────────────────────────────────────────────────
 
 	$taxonomy.on('change', function () {
@@ -605,6 +758,9 @@
 
 	// Grid Preview button (lives in controls bar).
 	$('#cpo-preview-grid').on('click', openPreviewModal);
+
+	// Import button.
+	$( '#cpo-import-btn' ).on( 'click', openImportModal );
 
 	// Initialize on page load.
 	loadTerms();
