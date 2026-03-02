@@ -731,3 +731,49 @@ body.cpo-modal-open {
 	margin: 6px 0 0 16px;
 	padding: 0;
 }
+
+/* Progress bar */
+#cpo-import-progress {
+	margin: 16px 0 8px;
+}
+
+.cpo-progress-bar-container {
+	height: 16px;
+	background: #dde0e4;
+	border-radius: 8px;
+	overflow: hidden;
+	margin-bottom: 8px;
+}
+
+.cpo-progress-bar {
+	height: 100%;
+	background: #2271b1;
+	border-radius: 8px;
+	transition: width 0.25s ease;
+	min-width: 0;
+}
+
+.cpo-progress-label {
+	margin: 0 0 8px;
+	color: #3c434a;
+	font-size: 13px;
+}
+
+.cpo-progress-stats {
+	display: flex;
+	gap: 20px;
+	font-size: 13px;
+	color: #3c434a;
+}
+
+.cpo-progress-stats .dashicons {
+	font-size: 16px;
+	width: 16px;
+	height: 16px;
+	vertical-align: middle;
+	margin-right: 2px;
+}
+
+.cpo-progress-stats .dashicons-yes-alt  { color: #2a7a2a; }
+.cpo-progress-stats .dashicons-update-alt { color: #2271b1; }
+.cpo-progress-stats .dashicons-minus    { color: #666; }
