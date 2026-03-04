@@ -463,6 +463,16 @@ Portfolio Item 2,,branding</pre>
 
 		$items = array_merge( $ordered, $unordered );
 
+		// If this term has never been explicitly ordered, auto-save the current display
+		// order so the frontend applies a consistent sequence from the very first load.
+		if ( ! get_option( 'cpo_ordered_term_' . $term_id ) && ! empty( $items ) ) {
+			foreach ( $items as $position => $item ) {
+				update_post_meta( $item['id'], $meta_key, $position );
+				$items[ $position ]['order'] = $position;
+			}
+			update_option( 'cpo_ordered_term_' . $term_id, true );
+		}
+
 		wp_send_json_success( array(
 			'items'    => $items,
 			'term_id'  => $term_id,
@@ -619,9 +629,10 @@ Portfolio Item 2,,branding</pre>
 		}
 
 		set_transient( 'cpo_import_' . $job_id, array(
-			'file'    => $tmp_dest,
-			'headers' => $headers,
-			'total'   => $total,
+			'file'           => $tmp_dest,
+			'headers'        => $headers,
+			'total'          => $total,
+			'term_positions' => array(),
 		), HOUR_IN_SECONDS );
 
 		wp_send_json_success( array(
@@ -648,9 +659,10 @@ Portfolio Item 2,,branding</pre>
 			wp_send_json_error( array( 'message' => 'Import job not found or expired.' ) );
 		}
 
-		$headers        = $job['headers'];
-		$has_thumbnail  = in_array( 'thumbnail', $headers, true );
-		$has_categories = in_array( 'categories', $headers, true );
+		$headers         = $job['headers'];
+		$has_thumbnail   = in_array( 'thumbnail', $headers, true );
+		$has_categories  = in_array( 'categories', $headers, true );
+		$term_positions  = $job['term_positions'] ?? array();
 
 		if ( $has_thumbnail ) {
 			require_once ABSPATH . 'wp-admin/includes/media.php';
@@ -764,6 +776,14 @@ Portfolio Item 2,,branding</pre>
 					}
 					if ( ! empty( $term_ids ) ) {
 						wp_set_object_terms( $post_id, $term_ids, $primary_taxonomy );
+						// Save import-row order for each assigned term so the frontend
+						// displays items in CSV sequence from the very first page load.
+						foreach ( $term_ids as $assigned_term_id ) {
+							$pos = $term_positions[ $assigned_term_id ] ?? 0;
+							update_post_meta( $post_id, '_cpo_order_' . $assigned_term_id, $pos );
+							update_option( 'cpo_ordered_term_' . $assigned_term_id, true );
+							$term_positions[ $assigned_term_id ] = $pos + 1;
+						}
 					}
 				}
 			}
@@ -783,6 +803,10 @@ Portfolio Item 2,,branding</pre>
 		if ( $done ) {
 			unlink( $job['file'] ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 			delete_transient( 'cpo_import_' . $job_id );
+		} else {
+			// Persist updated term_positions so the next chunk continues from the right offset.
+			$job['term_positions'] = $term_positions;
+			set_transient( 'cpo_import_' . $job_id, $job, HOUR_IN_SECONDS );
 		}
 
 		wp_send_json_success( array(
