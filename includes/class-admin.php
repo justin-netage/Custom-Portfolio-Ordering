@@ -666,13 +666,15 @@ class CPO_Admin {
 		$primary_taxonomy    = '';
 		$tax_is_hierarchical = false;
 		if ( $has_parent_cat || $has_sub_cat ) {
-			// Use ALL registered taxonomies (not just hierarchical) so the importer
-			// works regardless of how the post type's taxonomy was registered.
+			// Use the first custom (non-built-in) taxonomy for this post type.
+			// Skip built-ins like post_tag/category which may be registered first.
 			$all_taxes = get_object_taxonomies( self::POST_TYPE, 'objects' );
-			if ( ! empty( $all_taxes ) ) {
-				$first_tax           = reset( $all_taxes );
-				$primary_taxonomy    = $first_tax->name;
-				$tax_is_hierarchical = (bool) $first_tax->hierarchical;
+			foreach ( $all_taxes as $tax_obj ) {
+				if ( ! $tax_obj->_builtin ) {
+					$primary_taxonomy    = $tax_obj->name;
+					$tax_is_hierarchical = (bool) $tax_obj->hierarchical;
+					break;
+				}
 			}
 		}
 
