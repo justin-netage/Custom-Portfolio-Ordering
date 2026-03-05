@@ -96,13 +96,15 @@ class CPO_Admin {
 
 			<div class="cpo-import-page">
 				<div class="cpo-import-format">
-					<strong><?php esc_html_e( 'Required column:', 'custom-portfolio-ordering' ); ?></strong> <code>title</code><br>
+					<strong><?php esc_html_e( 'Required column:', 'custom-portfolio-ordering' ); ?></strong> <code>id</code> <?php esc_html_e( '(WordPress post ID — used to match existing items)', 'custom-portfolio-ordering' ); ?><br>
 					<strong><?php esc_html_e( 'Optional columns:', 'custom-portfolio-ordering' ); ?></strong>
+					<code>title</code> <?php esc_html_e( '(fallback match / new item name),', 'custom-portfolio-ordering' ); ?>
 					<code>thumbnail</code> <?php esc_html_e( '(image URL),', 'custom-portfolio-ordering' ); ?>
-					<code>categories</code> <?php esc_html_e( '(pipe-separated category names)', 'custom-portfolio-ordering' ); ?>
-					<pre class="cpo-import-example">title,thumbnail,categories
-Portfolio Item 1,https://example.com/photo.jpg,web-design|photography
-Portfolio Item 2,,branding</pre>
+					<code>Parent Category</code>, <code>Sub Category</code><br>
+					<?php esc_html_e( 'Any other columns in the sheet are ignored.', 'custom-portfolio-ordering' ); ?>
+					<pre class="cpo-import-example">id,title,Parent Category,Sub Category
+1,122,Venue,Wild Horse Resort
+2,456,Venue,Sun Valley Lodge</pre>
 				</div>
 
 				<div class="cpo-import-file-area">
@@ -555,16 +557,6 @@ Portfolio Item 2,,branding</pre>
 	}
 
 	/**
-	 * AJAX: Import portfolio items from a CSV file.
-	 *
-	 * Matches rows to existing posts by title. Existing posts are updated;
-	 * unmatched rows create new posts. Any column whose name matches a
-	 * registered taxonomy is treated as a term slug assignment for that taxonomy.
-	 *
-	 * Required CSV column : title
-	 * Optional CSV columns: status, content, <taxonomy_slug>
-	 */
-	/**
 	 * AJAX: Receive the uploaded CSV, store it temporarily, and return a job ID + row count.
 	 */
 	public function ajax_import_start() {
@@ -610,10 +602,10 @@ Portfolio Item 2,,branding</pre>
 		}
 		$headers = array_map( 'trim', $headers );
 
-		if ( ! in_array( 'title', $headers, true ) ) {
+		if ( ! in_array( 'id', $headers, true ) && ! in_array( 'title', $headers, true ) ) {
 			fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 			unlink( $tmp_dest ); // phpcs:ignore WordPress.WP.AlternativeFunctions
-			wp_send_json_error( array( 'message' => 'CSV must include a "title" column.' ) );
+			wp_send_json_error( array( 'message' => 'CSV must include an "id" or "title" column.' ) );
 		}
 
 		// Count total data rows (all rows after the header, including blank).
@@ -659,10 +651,11 @@ Portfolio Item 2,,branding</pre>
 			wp_send_json_error( array( 'message' => 'Import job not found or expired.' ) );
 		}
 
-		$headers         = $job['headers'];
-		$has_thumbnail   = in_array( 'thumbnail', $headers, true );
-		$has_categories  = in_array( 'categories', $headers, true );
-		$term_positions  = $job['term_positions'] ?? array();
+		$headers        = $job['headers'];
+		$has_thumbnail  = in_array( 'thumbnail', $headers, true );
+		$has_parent_cat = in_array( 'Parent Category', $headers, true );
+		$has_sub_cat    = in_array( 'Sub Category', $headers, true );
+		$term_positions = $job['term_positions'] ?? array();
 
 		if ( $has_thumbnail ) {
 			require_once ABSPATH . 'wp-admin/includes/media.php';
@@ -671,7 +664,7 @@ Portfolio Item 2,,branding</pre>
 		}
 
 		$primary_taxonomy = '';
-		if ( $has_categories ) {
+		if ( $has_parent_cat || $has_sub_cat ) {
 			$taxonomies       = $this->get_taxonomies();
 			$tax_keys         = array_keys( $taxonomies );
 			$primary_taxonomy = ! empty( $tax_keys ) ? $tax_keys[0] : '';
@@ -708,36 +701,57 @@ Portfolio Item 2,,branding</pre>
 				$row[] = '';
 			}
 
-			$data  = array_combine( $headers, array_slice( $row, 0, count( $headers ) ) );
-			$title = sanitize_text_field( trim( $data['title'] ) );
+			$data   = array_combine( $headers, array_slice( $row, 0, count( $headers ) ) );
+			$row_id = sanitize_text_field( trim( $data['id'] ?? '' ) );
+			$title  = sanitize_text_field( trim( $data['title'] ?? '' ) );
 
-			if ( $title === '' ) {
+			if ( $row_id === '' && $title === '' ) {
 				$skipped++;
 				continue;
 			}
 
-			// phpcs:ignore WordPress.DB.DirectDatabaseQuery
-			$existing_id = (int) $wpdb->get_var( $wpdb->prepare(
-				"SELECT ID FROM {$wpdb->posts} WHERE post_title = %s AND post_type = %s AND post_status != 'trash' LIMIT 1",
-				$title,
-				self::POST_TYPE
-			) );
+			// Match by id (WordPress post ID) first, then fall back to title.
+			$existing_id = 0;
+			if ( $row_id !== '' ) {
+				$numeric_id = absint( $row_id );
+				if ( $numeric_id ) {
+					$found = get_post( $numeric_id );
+					if ( $found && $found->post_type === self::POST_TYPE && $found->post_status !== 'trash' ) {
+						$existing_id = $found->ID;
+					}
+				}
+			}
+			if ( ! $existing_id && $title !== '' ) {
+				// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+				$existing_id = (int) $wpdb->get_var( $wpdb->prepare(
+					"SELECT ID FROM {$wpdb->posts} WHERE post_title = %s AND post_type = %s AND post_status != 'trash' LIMIT 1",
+					$title,
+					self::POST_TYPE
+				) );
+			}
 
 			$post_args = array(
-				'post_title'  => $title,
 				'post_status' => 'publish',
 				'post_type'   => self::POST_TYPE,
 			);
+			if ( $title !== '' ) {
+				$post_args['post_title'] = $title;
+			}
 
 			if ( $existing_id ) {
 				$post_args['ID'] = $existing_id;
 				$result          = wp_update_post( $post_args, true );
 			} else {
+				if ( $title === '' ) {
+					$skipped++; // Cannot create a post without a title.
+					continue;
+				}
 				$result = wp_insert_post( $post_args, true );
 			}
 
+			$label = $row_id !== '' ? 'id:' . $row_id : $title;
 			if ( is_wp_error( $result ) ) {
-				$errors[] = '"' . $title . '": ' . $result->get_error_message();
+				$errors[] = '"' . $label . '": ' . $result->get_error_message();
 				continue;
 			}
 
@@ -754,36 +768,67 @@ Portfolio Item 2,,branding</pre>
 				}
 			}
 
-			// Categories.
-			if ( $has_categories && $primary_taxonomy !== '' ) {
-				$cat_val = trim( $data['categories'] ?? '' );
-				if ( $cat_val !== '' ) {
-					$cat_names = array_filter( array_map( 'sanitize_text_field', explode( '|', $cat_val ) ) );
-					$term_ids  = array();
-					foreach ( $cat_names as $cat_name ) {
-						$term = get_term_by( 'name', $cat_name, $primary_taxonomy );
-						if ( ! $term ) {
-							$term = get_term_by( 'slug', sanitize_title( $cat_name ), $primary_taxonomy );
-						}
-						if ( $term ) {
-							$term_ids[] = $term->term_id;
-						} else {
-							$new_term = wp_insert_term( $cat_name, $primary_taxonomy );
-							if ( ! is_wp_error( $new_term ) ) {
-								$term_ids[] = $new_term['term_id'];
-							}
+			// Parent Category + Sub Category.
+			if ( $primary_taxonomy !== '' && ( $has_parent_cat || $has_sub_cat ) ) {
+				$parent_cat_name = sanitize_text_field( trim( $data['Parent Category'] ?? '' ) );
+				$sub_cat_name    = sanitize_text_field( trim( $data['Sub Category'] ?? '' ) );
+				$term_ids        = array();
+				$parent_term_id  = 0;
+
+				if ( $parent_cat_name !== '' ) {
+					// Find or create the root-level parent term.
+					$existing = get_terms( array(
+						'taxonomy'   => $primary_taxonomy,
+						'name'       => $parent_cat_name,
+						'parent'     => 0,
+						'hide_empty' => false,
+						'fields'     => 'ids',
+					) );
+					if ( ! empty( $existing ) && ! is_wp_error( $existing ) ) {
+						$parent_term_id = (int) $existing[0];
+					} else {
+						$new_term = wp_insert_term( $parent_cat_name, $primary_taxonomy );
+						if ( ! is_wp_error( $new_term ) ) {
+							$parent_term_id = $new_term['term_id'];
 						}
 					}
-					if ( ! empty( $term_ids ) ) {
-						wp_set_object_terms( $post_id, $term_ids, $primary_taxonomy );
-						// Save import-row order for each assigned term so the frontend
-						// displays items in CSV sequence from the very first page load.
-						foreach ( $term_ids as $assigned_term_id ) {
-							$pos = $term_positions[ $assigned_term_id ] ?? 0;
-							update_post_meta( $post_id, '_cpo_order_' . $assigned_term_id, $pos );
-							update_option( 'cpo_ordered_term_' . $assigned_term_id, true );
-							$term_positions[ $assigned_term_id ] = $pos + 1;
-						}
+					if ( $parent_term_id ) {
+						$term_ids[] = $parent_term_id;
+					}
+				}
+
+				if ( $sub_cat_name !== '' ) {
+					// Find or create the sub-category, scoped under the parent when available.
+					$sub_args = array(
+						'taxonomy'   => $primary_taxonomy,
+						'name'       => $sub_cat_name,
+						'hide_empty' => false,
+						'fields'     => 'ids',
+					);
+					if ( $parent_term_id ) {
+						$sub_args['parent'] = $parent_term_id;
+					}
+					$existing = get_terms( $sub_args );
+					if ( ! empty( $existing ) && ! is_wp_error( $existing ) ) {
+						$sub_term_id = (int) $existing[0];
+					} else {
+						$insert_args = $parent_term_id ? array( 'parent' => $parent_term_id ) : array();
+						$new_term    = wp_insert_term( $sub_cat_name, $primary_taxonomy, $insert_args );
+						$sub_term_id = ! is_wp_error( $new_term ) ? $new_term['term_id'] : 0;
+					}
+					if ( $sub_term_id ) {
+						$term_ids[] = $sub_term_id;
+					}
+				}
+
+				if ( ! empty( $term_ids ) ) {
+					// Append terms so existing category assignments are preserved.
+					wp_set_object_terms( $post_id, $term_ids, $primary_taxonomy, true );
+					foreach ( $term_ids as $assigned_term_id ) {
+						$pos = $term_positions[ $assigned_term_id ] ?? 0;
+						update_post_meta( $post_id, '_cpo_order_' . $assigned_term_id, $pos );
+						update_option( 'cpo_ordered_term_' . $assigned_term_id, true );
+						$term_positions[ $assigned_term_id ] = $pos + 1;
 					}
 				}
 			}
