@@ -609,7 +609,7 @@ class CPO_Admin {
 			unlink( $tmp_dest ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 			wp_send_json_error( array( 'message' => 'The CSV file appears to be empty.' ) );
 		}
-		$headers = array_map( 'trim', $headers );
+		$headers = array_map( 'strtolower', array_map( 'trim', $headers ) );
 
 		if ( ! in_array( 'id', $headers, true ) && ! in_array( 'title', $headers, true ) ) {
 			fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions
@@ -662,8 +662,8 @@ class CPO_Admin {
 
 		$headers        = $job['headers'];
 		$has_thumbnail  = in_array( 'thumbnail', $headers, true );
-		$has_parent_cat = in_array( 'Parent Category', $headers, true );
-		$has_sub_cat    = in_array( 'Sub Category', $headers, true );
+		$has_parent_cat = in_array( 'parent category', $headers, true );
+		$has_sub_cat    = in_array( 'sub category', $headers, true );
 		$term_positions = $job['term_positions'] ?? array();
 
 		if ( $has_thumbnail ) {
@@ -787,8 +787,8 @@ class CPO_Admin {
 
 			// Parent Category + Sub Category.
 			if ( $primary_taxonomy !== '' && ( $has_parent_cat || $has_sub_cat ) ) {
-				$parent_cat_name = sanitize_text_field( trim( $data['Parent Category'] ?? '' ) );
-				$sub_cat_name    = sanitize_text_field( trim( $data['Sub Category'] ?? '' ) );
+				$parent_cat_name = sanitize_text_field( trim( $data['parent category'] ?? '' ) );
+				$sub_cat_name    = sanitize_text_field( trim( $data['sub category'] ?? '' ) );
 				$term_ids        = array();
 				$parent_term_id  = 0;
 
