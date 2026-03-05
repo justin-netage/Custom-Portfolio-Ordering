@@ -12,8 +12,11 @@ class CPO_Admin {
 	const POST_TYPE         = 'featured_item';
 	const IMPORT_CHUNK_SIZE = 5;
 
+	private $page_hooks = array();
+
 	public function __construct() {
 		add_action( 'admin_menu', array( $this, 'add_menu_page' ) );
+		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_assets' ) );
 		add_action( 'wp_ajax_cpo_save_order', array( $this, 'ajax_save_order' ) );
 		add_action( 'wp_ajax_cpo_get_items', array( $this, 'ajax_get_items' ) );
 		add_action( 'wp_ajax_cpo_import_start', array( $this, 'ajax_import_start' ) );
@@ -54,7 +57,7 @@ class CPO_Admin {
 			26
 		);
 
-		add_submenu_page(
+		$this->page_hooks[] = add_submenu_page(
 			'custom-portfolio-ordering',
 			__( 'Portfolio Ordering', 'custom-portfolio-ordering' ),
 			__( 'Portfolio Ordering', 'custom-portfolio-ordering' ),
@@ -63,7 +66,7 @@ class CPO_Admin {
 			array( $this, 'render_admin_page' )
 		);
 
-		add_submenu_page(
+		$this->page_hooks[] = add_submenu_page(
 			'custom-portfolio-ordering',
 			__( 'Import Portfolio Items', 'custom-portfolio-ordering' ),
 			__( 'Import Items', 'custom-portfolio-ordering' ),
@@ -77,13 +80,6 @@ class CPO_Admin {
 	 * Render the Import Items admin page.
 	 */
 	public function render_import_page() {
-		wp_enqueue_style(
-			'cpo-admin-style',
-			CPO_PLUGIN_URL . 'assets/css/admin-style.css',
-			array(),
-			CPO_VERSION
-		);
-
 		?>
 		<div class="wrap cpo-wrap">
 			<h1><?php esc_html_e( 'Import Portfolio Items', 'custom-portfolio-ordering' ); ?></h1>
@@ -292,6 +288,10 @@ class CPO_Admin {
 	 * @param string $hook The current admin page hook.
 	 */
 	public function enqueue_assets( $hook ) {
+		if ( ! in_array( $hook, $this->page_hooks, true ) ) {
+			return;
+		}
+
 		wp_enqueue_script( 'jquery-ui-sortable' );
 
 		wp_enqueue_script(
@@ -319,9 +319,6 @@ class CPO_Admin {
 	 * Render the admin page.
 	 */
 	public function render_admin_page() {
-		// Enqueue assets only on our page.
-		$this->enqueue_assets( '' );
-
 		$taxonomies = $this->get_taxonomies();
 		?>
 		<div class="wrap cpo-wrap">
