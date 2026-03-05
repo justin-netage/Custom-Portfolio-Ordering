@@ -663,11 +663,17 @@ class CPO_Admin {
 			require_once ABSPATH . 'wp-admin/includes/image.php';
 		}
 
-		$primary_taxonomy = '';
+		$primary_taxonomy    = '';
+		$tax_is_hierarchical = false;
 		if ( $has_parent_cat || $has_sub_cat ) {
-			$taxonomies       = $this->get_taxonomies();
-			$tax_keys         = array_keys( $taxonomies );
-			$primary_taxonomy = ! empty( $tax_keys ) ? $tax_keys[0] : '';
+			// Use ALL registered taxonomies (not just hierarchical) so the importer
+			// works regardless of how the post type's taxonomy was registered.
+			$all_taxes = get_object_taxonomies( self::POST_TYPE, 'objects' );
+			if ( ! empty( $all_taxes ) ) {
+				$first_tax           = reset( $all_taxes );
+				$primary_taxonomy    = $first_tax->name;
+				$tax_is_hierarchical = (bool) $first_tax->hierarchical;
+			}
 		}
 
 		$handle = fopen( $job['file'], 'r' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
@@ -776,19 +782,25 @@ class CPO_Admin {
 				$parent_term_id  = 0;
 
 				if ( $parent_cat_name !== '' ) {
-					// Find or create the root-level parent term.
-					$existing = get_terms( array(
-						'taxonomy'   => $primary_taxonomy,
-						'name'       => $parent_cat_name,
-						'parent'     => 0,
-						'hide_empty' => false,
-						'fields'     => 'ids',
-					) );
+					// Find or create the parent term (root-level for hierarchical taxonomies).
+					$lookup_args = array(
+						'taxonomy'               => $primary_taxonomy,
+						'name'                   => $parent_cat_name,
+						'hide_empty'             => false,
+						'fields'                 => 'ids',
+						'update_term_meta_cache' => false,
+					);
+					if ( $tax_is_hierarchical ) {
+						$lookup_args['parent'] = 0;
+					}
+					$existing = get_terms( $lookup_args );
 					if ( ! empty( $existing ) && ! is_wp_error( $existing ) ) {
 						$parent_term_id = (int) $existing[0];
 					} else {
 						$new_term = wp_insert_term( $parent_cat_name, $primary_taxonomy );
-						if ( ! is_wp_error( $new_term ) ) {
+						if ( is_wp_error( $new_term ) && $new_term->get_error_code() === 'term_exists' ) {
+							$parent_term_id = (int) $new_term->get_error_data();
+						} elseif ( ! is_wp_error( $new_term ) ) {
 							$parent_term_id = $new_term['term_id'];
 						}
 					}
@@ -800,21 +812,28 @@ class CPO_Admin {
 				if ( $sub_cat_name !== '' ) {
 					// Find or create the sub-category, scoped under the parent when available.
 					$sub_args = array(
-						'taxonomy'   => $primary_taxonomy,
-						'name'       => $sub_cat_name,
-						'hide_empty' => false,
-						'fields'     => 'ids',
+						'taxonomy'               => $primary_taxonomy,
+						'name'                   => $sub_cat_name,
+						'hide_empty'             => false,
+						'fields'                 => 'ids',
+						'update_term_meta_cache' => false,
 					);
-					if ( $parent_term_id ) {
+					if ( $tax_is_hierarchical && $parent_term_id ) {
 						$sub_args['parent'] = $parent_term_id;
 					}
 					$existing = get_terms( $sub_args );
 					if ( ! empty( $existing ) && ! is_wp_error( $existing ) ) {
 						$sub_term_id = (int) $existing[0];
 					} else {
-						$insert_args = $parent_term_id ? array( 'parent' => $parent_term_id ) : array();
+						$insert_args = ( $tax_is_hierarchical && $parent_term_id ) ? array( 'parent' => $parent_term_id ) : array();
 						$new_term    = wp_insert_term( $sub_cat_name, $primary_taxonomy, $insert_args );
-						$sub_term_id = ! is_wp_error( $new_term ) ? $new_term['term_id'] : 0;
+						if ( is_wp_error( $new_term ) && $new_term->get_error_code() === 'term_exists' ) {
+							$sub_term_id = (int) $new_term->get_error_data();
+						} elseif ( ! is_wp_error( $new_term ) ) {
+							$sub_term_id = $new_term['term_id'];
+						} else {
+							$sub_term_id = 0;
+						}
 					}
 					if ( $sub_term_id ) {
 						$term_ids[] = $sub_term_id;
@@ -830,7 +849,11 @@ class CPO_Admin {
 						update_option( 'cpo_ordered_term_' . $assigned_term_id, true );
 						$term_positions[ $assigned_term_id ] = $pos + 1;
 					}
+				} else {
+					$errors[] = '"' . $label . '": could not resolve taxonomy "' . $primary_taxonomy . '" — no terms assigned';
 				}
+			} elseif ( $has_parent_cat || $has_sub_cat ) {
+				$errors[] = '"' . $label . '": no taxonomy found for post type "' . self::POST_TYPE . '" — categories skipped';
 			}
 
 			if ( $existing_id ) {
