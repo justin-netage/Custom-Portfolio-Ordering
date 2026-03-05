@@ -727,9 +727,17 @@ class CPO_Admin {
 				continue;
 			}
 
-			// Match by id (WordPress post ID) first, then fall back to title.
+			// Match by title first, then fall back to id (WordPress post ID).
 			$existing_id = 0;
-			if ( $row_id !== '' ) {
+			if ( $title !== '' ) {
+				// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+				$existing_id = (int) $wpdb->get_var( $wpdb->prepare(
+					"SELECT ID FROM {$wpdb->posts} WHERE post_title = %s AND post_type = %s AND post_status != 'trash' LIMIT 1",
+					$title,
+					self::POST_TYPE
+				) );
+			}
+			if ( ! $existing_id && $row_id !== '' ) {
 				$numeric_id = absint( $row_id );
 				if ( $numeric_id ) {
 					$found = get_post( $numeric_id );
@@ -737,14 +745,6 @@ class CPO_Admin {
 						$existing_id = $found->ID;
 					}
 				}
-			}
-			if ( ! $existing_id && $title !== '' ) {
-				// phpcs:ignore WordPress.DB.DirectDatabaseQuery
-				$existing_id = (int) $wpdb->get_var( $wpdb->prepare(
-					"SELECT ID FROM {$wpdb->posts} WHERE post_title = %s AND post_type = %s AND post_status != 'trash' LIMIT 1",
-					$title,
-					self::POST_TYPE
-				) );
 			}
 
 			$post_args = array(
