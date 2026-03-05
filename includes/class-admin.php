@@ -144,7 +144,7 @@ class CPO_Admin {
 			var nonce   = <?php echo wp_json_encode( wp_create_nonce( 'cpo_sort_nonce' ) ); ?>;
 			var ajaxUrl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
 
-			var jobId = null, totalRows = 0, created = 0, updated = 0, skipped = 0, errors = [];
+			var jobId = null, totalRows = 0, created = 0, updated = 0, skipped = 0, errors = [], diagData = null;
 
 			function escHtml( str ) {
 				return $( '<div>' ).text( String( str ) ).html();
@@ -188,6 +188,14 @@ class CPO_Admin {
 					$.each( errors, function ( i, err ) { html += '<li>' + escHtml( err ) + '</li>'; } );
 					html += '</ul></div>';
 				}
+				if ( diagData ) {
+					html += '<details class="cpo-import-diag"><summary>Diagnostics (taxonomy detection)</summary><ul>';
+					html += '<li><strong>Detected headers:</strong> ' + escHtml( JSON.stringify( diagData.headers ) ) + '</li>';
+					html += '<li><strong>has_parent_cat:</strong> ' + escHtml( String( diagData.has_parent_cat ) ) + '</li>';
+					html += '<li><strong>has_sub_cat:</strong> ' + escHtml( String( diagData.has_sub_cat ) ) + '</li>';
+					html += '<li><strong>primary_taxonomy:</strong> ' + escHtml( diagData.primary_taxonomy || '(none found)' ) + '</li>';
+					html += '</ul></details>';
+				}
 				$( '#cpo-import-results' ).html( html ).show();
 				resetFileInput();
 			}
@@ -207,6 +215,7 @@ class CPO_Admin {
 						updated += d.updated;
 						skipped += d.skipped;
 						if ( d.errors && d.errors.length ) { errors = errors.concat( d.errors ); }
+						if ( d.diag && Object.keys( d.diag ).length ) { diagData = d.diag; }
 						updateProgress( d.next_offset );
 						if ( d.done ) {
 							showComplete();
@@ -234,7 +243,7 @@ class CPO_Admin {
 				if ( ! fileInput.files.length ) return;
 
 				// Reset state.
-				jobId = null; totalRows = 0; created = 0; updated = 0; skipped = 0; errors = [];
+				jobId = null; totalRows = 0; created = 0; updated = 0; skipped = 0; errors = []; diagData = null;
 				$( '#cpo-import-submit' ).prop( 'disabled', true );
 				$( '#cpo-import-spinner' ).addClass( 'is-active' );
 				$( '#cpo-import-results' ).hide();
@@ -879,6 +888,15 @@ class CPO_Admin {
 			set_transient( 'cpo_import_' . $job_id, $job, HOUR_IN_SECONDS );
 		}
 
+		// First-chunk diagnostics to help surface taxonomy-detection issues.
+		$diag = array();
+		if ( $offset === 0 ) {
+			$diag['headers']          = $headers;
+			$diag['has_parent_cat']   = $has_parent_cat;
+			$diag['has_sub_cat']      = $has_sub_cat;
+			$diag['primary_taxonomy'] = $primary_taxonomy;
+		}
+
 		wp_send_json_success( array(
 			'created'     => $created,
 			'updated'     => $updated,
@@ -886,6 +904,7 @@ class CPO_Admin {
 			'errors'      => $errors,
 			'next_offset' => $next_offset,
 			'done'        => $done,
+			'diag'        => $diag,
 		) );
 	}
 }
