@@ -9,13 +9,15 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class CPO_Admin {
 
-	const POST_TYPE = 'featured_item';
+	const POST_TYPE         = 'featured_item';
+	const IMPORT_CHUNK_SIZE = 5;
 
 	public function __construct() {
 		add_action( 'admin_menu', array( $this, 'add_menu_page' ) );
 		add_action( 'wp_ajax_cpo_save_order', array( $this, 'ajax_save_order' ) );
 		add_action( 'wp_ajax_cpo_get_items', array( $this, 'ajax_get_items' ) );
-		add_action( 'wp_ajax_cpo_import', array( $this, 'ajax_import' ) );
+		add_action( 'wp_ajax_cpo_import_start', array( $this, 'ajax_import_start' ) );
+		add_action( 'wp_ajax_cpo_import_chunk', array( $this, 'ajax_import_chunk' ) );
 		add_action( 'wp_ajax_cpo_delete_item', array( $this, 'ajax_delete_item' ) );
 	}
 
@@ -94,13 +96,15 @@ class CPO_Admin {
 
 			<div class="cpo-import-page">
 				<div class="cpo-import-format">
-					<strong><?php esc_html_e( 'Required column:', 'custom-portfolio-ordering' ); ?></strong> <code>title</code><br>
+					<strong><?php esc_html_e( 'Required column:', 'custom-portfolio-ordering' ); ?></strong> <code>id</code> <?php esc_html_e( '(WordPress post ID — used to match existing items)', 'custom-portfolio-ordering' ); ?><br>
 					<strong><?php esc_html_e( 'Optional columns:', 'custom-portfolio-ordering' ); ?></strong>
+					<code>title</code> <?php esc_html_e( '(fallback match / new item name),', 'custom-portfolio-ordering' ); ?>
 					<code>thumbnail</code> <?php esc_html_e( '(image URL),', 'custom-portfolio-ordering' ); ?>
-					<code>categories</code> <?php esc_html_e( '(pipe-separated category names)', 'custom-portfolio-ordering' ); ?>
-					<pre class="cpo-import-example">title,thumbnail,categories
-Portfolio Item 1,https://example.com/photo.jpg,web-design|photography
-Portfolio Item 2,,branding</pre>
+					<code>Parent Category</code>, <code>Sub Category</code><br>
+					<?php esc_html_e( 'Any other columns in the sheet are ignored.', 'custom-portfolio-ordering' ); ?>
+					<pre class="cpo-import-example">id,title,Parent Category,Sub Category
+1,122,Venue,Wild Horse Resort
+2,456,Venue,Sun Valley Lodge</pre>
 				</div>
 
 				<div class="cpo-import-file-area">
@@ -119,6 +123,18 @@ Portfolio Item 2,,branding</pre>
 					<span id="cpo-import-spinner" class="spinner" style="float:none;vertical-align:middle;"></span>
 				</p>
 
+				<div id="cpo-import-progress" style="display:none;">
+					<div class="cpo-progress-bar-container">
+						<div id="cpo-progress-bar" class="cpo-progress-bar" style="width:0%;"></div>
+					</div>
+					<p id="cpo-progress-label" class="cpo-progress-label"></p>
+					<div class="cpo-progress-stats">
+						<span><span class="dashicons dashicons-yes-alt"></span> <strong id="cpo-stat-created">0</strong> created</span>
+						<span><span class="dashicons dashicons-update-alt"></span> <strong id="cpo-stat-updated">0</strong> updated</span>
+						<span><span class="dashicons dashicons-minus"></span> <strong id="cpo-stat-skipped">0</strong> skipped</span>
+					</div>
+				</div>
+
 				<div id="cpo-import-results" class="cpo-import-results" style="display:none;"></div>
 			</div>
 		</div>
@@ -128,8 +144,78 @@ Portfolio Item 2,,branding</pre>
 			var nonce   = <?php echo wp_json_encode( wp_create_nonce( 'cpo_sort_nonce' ) ); ?>;
 			var ajaxUrl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
 
+			var jobId = null, totalRows = 0, created = 0, updated = 0, skipped = 0, errors = [];
+
 			function escHtml( str ) {
 				return $( '<div>' ).text( String( str ) ).html();
+			}
+
+			function updateProgress( processed ) {
+				var pct = totalRows > 0 ? Math.round( processed / totalRows * 100 ) : 0;
+				$( '#cpo-progress-bar' ).css( 'width', pct + '%' );
+				$( '#cpo-progress-label' ).text( 'Processing row ' + Math.min( processed, totalRows ) + ' of ' + totalRows + '\u2026' );
+				$( '#cpo-stat-created' ).text( created );
+				$( '#cpo-stat-updated' ).text( updated );
+				$( '#cpo-stat-skipped' ).text( skipped );
+			}
+
+			function showError( msg ) {
+				$( '#cpo-import-results' ).html( '<p class="cpo-import-error">' + escHtml( msg ) + '</p>' ).show();
+				$( '#cpo-import-submit' ).prop( 'disabled', false );
+				$( '#cpo-import-spinner' ).removeClass( 'is-active' );
+			}
+
+			function resetFileInput() {
+				$( '#cpo-import-submit' ).prop( 'disabled', true );
+				$( '#cpo-csv-file' ).val( '' );
+				$( '#cpo-file-name' ).text( 'No file chosen' );
+			}
+
+			function showComplete() {
+				$( '#cpo-progress-bar' ).css( 'width', '100%' );
+				$( '#cpo-progress-label' ).text( 'Import complete!' );
+
+				var html = '<p class="cpo-import-success">Import complete!</p>';
+				html += '<ul class="cpo-import-summary">';
+				html += '<li><span class="dashicons dashicons-yes-alt"></span> ' + created + ' item' + ( created !== 1 ? 's' : '' ) + ' created</li>';
+				html += '<li><span class="dashicons dashicons-update-alt"></span> ' + updated + ' item' + ( updated !== 1 ? 's' : '' ) + ' updated</li>';
+				if ( skipped ) {
+					html += '<li><span class="dashicons dashicons-minus"></span> ' + skipped + ' row' + ( skipped !== 1 ? 's' : '' ) + ' skipped</li>';
+				}
+				html += '</ul>';
+				if ( errors.length ) {
+					html += '<div class="cpo-import-errors"><strong>Errors:</strong><ul>';
+					$.each( errors, function ( i, err ) { html += '<li>' + escHtml( err ) + '</li>'; } );
+					html += '</ul></div>';
+				}
+				$( '#cpo-import-results' ).html( html ).show();
+				resetFileInput();
+			}
+
+			function processNextChunk( offset ) {
+				$.ajax( {
+					url: ajaxUrl,
+					type: 'POST',
+					data: { action: 'cpo_import_chunk', nonce: nonce, job_id: jobId, offset: offset },
+					success: function ( response ) {
+						if ( ! response.success ) {
+							showError( ( response.data && response.data.message ) ? response.data.message : 'Import failed.' );
+							return;
+						}
+						var d = response.data;
+						created += d.created;
+						updated += d.updated;
+						skipped += d.skipped;
+						if ( d.errors && d.errors.length ) { errors = errors.concat( d.errors ); }
+						updateProgress( d.next_offset );
+						if ( d.done ) {
+							showComplete();
+						} else {
+							processNextChunk( d.next_offset );
+						}
+					},
+					error: function () { showError( 'A server error occurred during import.' ); }
+				} );
 			}
 
 			$( '#cpo-csv-file' ).on( 'change', function () {
@@ -147,14 +233,18 @@ Portfolio Item 2,,branding</pre>
 				var fileInput = $( '#cpo-csv-file' )[0];
 				if ( ! fileInput.files.length ) return;
 
-				var formData = new FormData();
-				formData.append( 'action', 'cpo_import' );
-				formData.append( 'nonce', nonce );
-				formData.append( 'csv_file', fileInput.files[0] );
-
+				// Reset state.
+				jobId = null; totalRows = 0; created = 0; updated = 0; skipped = 0; errors = [];
 				$( '#cpo-import-submit' ).prop( 'disabled', true );
 				$( '#cpo-import-spinner' ).addClass( 'is-active' );
 				$( '#cpo-import-results' ).hide();
+				$( '#cpo-import-progress' ).hide();
+
+				// Step 1: upload file and get a job ID + total row count.
+				var formData = new FormData();
+				formData.append( 'action', 'cpo_import_start' );
+				formData.append( 'nonce', nonce );
+				formData.append( 'csv_file', fileInput.files[0] );
 
 				$.ajax( {
 					url: ajaxUrl,
@@ -164,42 +254,21 @@ Portfolio Item 2,,branding</pre>
 					contentType: false,
 					success: function ( response ) {
 						$( '#cpo-import-spinner' ).removeClass( 'is-active' );
-
 						if ( ! response.success ) {
-							var msg = ( response.data && response.data.message ) ? response.data.message : 'Import failed.';
-							$( '#cpo-import-results' ).html( '<p class="cpo-import-error">' + escHtml( msg ) + '</p>' ).show();
-							$( '#cpo-import-submit' ).prop( 'disabled', false );
+							showError( ( response.data && response.data.message ) ? response.data.message : 'Failed to start import.' );
 							return;
 						}
+						jobId     = response.data.job_id;
+						totalRows = response.data.total;
 
-						var d    = response.data;
-						var html = '<p class="cpo-import-success">Import complete!</p>';
-						html += '<ul class="cpo-import-summary">';
-						html += '<li><span class="dashicons dashicons-yes-alt"></span> ' + d.created + ' item' + ( d.created !== 1 ? 's' : '' ) + ' created</li>';
-						html += '<li><span class="dashicons dashicons-update-alt"></span> ' + d.updated + ' item' + ( d.updated !== 1 ? 's' : '' ) + ' updated</li>';
-						if ( d.skipped ) {
-							html += '<li><span class="dashicons dashicons-minus"></span> ' + d.skipped + ' row' + ( d.skipped !== 1 ? 's' : '' ) + ' skipped</li>';
-						}
-						html += '</ul>';
-
-						if ( d.errors && d.errors.length ) {
-							html += '<div class="cpo-import-errors"><strong>Errors:</strong><ul>';
-							$.each( d.errors, function ( i, err ) {
-								html += '<li>' + escHtml( err ) + '</li>';
-							} );
-							html += '</ul></div>';
-						}
-
-						$( '#cpo-import-results' ).html( html ).show();
-						// Reset for another import.
-						$( '#cpo-import-submit' ).prop( 'disabled', true );
-						$( '#cpo-csv-file' ).val( '' );
-						$( '#cpo-file-name' ).text( 'No file chosen' );
+						// Step 2: process chunks, updating the progress bar after each.
+						$( '#cpo-import-progress' ).show();
+						updateProgress( 0 );
+						processNextChunk( 0 );
 					},
 					error: function () {
 						$( '#cpo-import-spinner' ).removeClass( 'is-active' );
-						$( '#cpo-import-results' ).html( '<p class="cpo-import-error">A server error occurred. Please try again.</p>' ).show();
-						$( '#cpo-import-submit' ).prop( 'disabled', false );
+						showError( 'A server error occurred. Please try again.' );
 					}
 				} );
 			} );
@@ -396,6 +465,16 @@ Portfolio Item 2,,branding</pre>
 
 		$items = array_merge( $ordered, $unordered );
 
+		// If this term has never been explicitly ordered, auto-save the current display
+		// order so the frontend applies a consistent sequence from the very first load.
+		if ( ! get_option( 'cpo_ordered_term_' . $term_id ) && ! empty( $items ) ) {
+			foreach ( $items as $position => $item ) {
+				update_post_meta( $item['id'], $meta_key, $position );
+				$items[ $position ]['order'] = $position;
+			}
+			update_option( 'cpo_ordered_term_' . $term_id, true );
+		}
+
 		wp_send_json_success( array(
 			'items'    => $items,
 			'term_id'  => $term_id,
@@ -478,16 +557,9 @@ Portfolio Item 2,,branding</pre>
 	}
 
 	/**
-	 * AJAX: Import portfolio items from a CSV file.
-	 *
-	 * Matches rows to existing posts by title. Existing posts are updated;
-	 * unmatched rows create new posts. Any column whose name matches a
-	 * registered taxonomy is treated as a term slug assignment for that taxonomy.
-	 *
-	 * Required CSV column : title
-	 * Optional CSV columns: status, content, <taxonomy_slug>
+	 * AJAX: Receive the uploaded CSV, store it temporarily, and return a job ID + row count.
 	 */
-	public function ajax_import() {
+	public function ajax_import_start() {
 		check_ajax_referer( 'cpo_sort_nonce', 'nonce' );
 
 		if ( ! current_user_can( 'edit_posts' ) ) {
@@ -498,27 +570,92 @@ Portfolio Item 2,,branding</pre>
 			wp_send_json_error( array( 'message' => 'No valid file uploaded.' ) );
 		}
 
+		// Store the file in a protected uploads subdirectory so it survives across chunk requests.
+		$upload_dir = wp_upload_dir();
+		$import_dir = $upload_dir['basedir'] . '/cpo-imports';
+		wp_mkdir_p( $import_dir );
+
+		$htaccess = $import_dir . '/.htaccess';
+		if ( ! file_exists( $htaccess ) ) {
+			file_put_contents( $htaccess, "deny from all\n" ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		}
+
+		$job_id   = wp_generate_password( 16, false );
+		$tmp_dest = $import_dir . '/import-' . $job_id . '.csv';
+
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput
-		$tmp_path = $_FILES['csv_file']['tmp_name'];
-		$handle   = fopen( $tmp_path, 'r' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		if ( ! move_uploaded_file( $_FILES['csv_file']['tmp_name'], $tmp_dest ) ) {
+			wp_send_json_error( array( 'message' => 'Could not store the uploaded file.' ) );
+		}
+
+		$handle = fopen( $tmp_dest, 'r' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 		if ( ! $handle ) {
+			unlink( $tmp_dest ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 			wp_send_json_error( array( 'message' => 'Could not read the uploaded file.' ) );
 		}
 
 		$headers = fgetcsv( $handle );
 		if ( ! $headers ) {
 			fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+			unlink( $tmp_dest ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 			wp_send_json_error( array( 'message' => 'The CSV file appears to be empty.' ) );
 		}
 		$headers = array_map( 'trim', $headers );
 
-		if ( ! in_array( 'title', $headers, true ) ) {
+		if ( ! in_array( 'id', $headers, true ) && ! in_array( 'title', $headers, true ) ) {
 			fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions
-			wp_send_json_error( array( 'message' => 'CSV must include a "title" column.' ) );
+			unlink( $tmp_dest ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+			wp_send_json_error( array( 'message' => 'CSV must include an "id" or "title" column.' ) );
 		}
 
+		// Count total data rows (all rows after the header, including blank).
+		$total = 0;
+		while ( fgetcsv( $handle ) !== false ) {
+			$total++;
+		}
+		fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+
+		if ( $total === 0 ) {
+			unlink( $tmp_dest ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+			wp_send_json_error( array( 'message' => 'The CSV file contains no data rows.' ) );
+		}
+
+		set_transient( 'cpo_import_' . $job_id, array(
+			'file'           => $tmp_dest,
+			'headers'        => $headers,
+			'total'          => $total,
+			'term_positions' => array(),
+		), HOUR_IN_SECONDS );
+
+		wp_send_json_success( array(
+			'job_id' => $job_id,
+			'total'  => $total,
+		) );
+	}
+
+	/**
+	 * AJAX: Process one chunk of rows for an in-progress import job.
+	 */
+	public function ajax_import_chunk() {
+		check_ajax_referer( 'cpo_sort_nonce', 'nonce' );
+
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			wp_send_json_error( array( 'message' => 'Permission denied.' ) );
+		}
+
+		$job_id = sanitize_key( $_POST['job_id'] ?? '' );
+		$offset = absint( $_POST['offset'] ?? 0 );
+
+		$job = get_transient( 'cpo_import_' . $job_id );
+		if ( ! $job || empty( $job['file'] ) || ! file_exists( $job['file'] ) ) {
+			wp_send_json_error( array( 'message' => 'Import job not found or expired.' ) );
+		}
+
+		$headers        = $job['headers'];
 		$has_thumbnail  = in_array( 'thumbnail', $headers, true );
-		$has_categories = in_array( 'categories', $headers, true );
+		$has_parent_cat = in_array( 'Parent Category', $headers, true );
+		$has_sub_cat    = in_array( 'Sub Category', $headers, true );
+		$term_positions = $job['term_positions'] ?? array();
 
 		if ( $has_thumbnail ) {
 			require_once ABSPATH . 'wp-admin/includes/media.php';
@@ -526,69 +663,101 @@ Portfolio Item 2,,branding</pre>
 			require_once ABSPATH . 'wp-admin/includes/image.php';
 		}
 
-		// Resolve the primary hierarchical taxonomy for category assignment.
 		$primary_taxonomy = '';
-		if ( $has_categories ) {
+		if ( $has_parent_cat || $has_sub_cat ) {
 			$taxonomies       = $this->get_taxonomies();
 			$tax_keys         = array_keys( $taxonomies );
 			$primary_taxonomy = ! empty( $tax_keys ) ? $tax_keys[0] : '';
 		}
 
+		$handle = fopen( $job['file'], 'r' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		if ( ! $handle ) {
+			wp_send_json_error( array( 'message' => 'Could not read import file.' ) );
+		}
+
+		fgetcsv( $handle ); // skip header row
+
+		// Seek to the current offset.
+		for ( $i = 0; $i < $offset; $i++ ) {
+			fgetcsv( $handle );
+		}
+
 		global $wpdb;
+		$created  = 0;
+		$updated  = 0;
+		$skipped  = 0;
+		$errors   = array();
+		$consumed = 0;
 
-		$created = 0;
-		$updated = 0;
-		$skipped = 0;
-		$errors  = array();
+		while ( $consumed < self::IMPORT_CHUNK_SIZE && ( $row = fgetcsv( $handle ) ) !== false ) {
+			$consumed++;
 
-		while ( ( $row = fgetcsv( $handle ) ) !== false ) {
-			// Skip blank rows.
+			// Skip blank rows (counted in offset but not processed).
 			if ( count( $row ) === 1 && trim( $row[0] ) === '' ) {
 				continue;
 			}
 
-			// Pad short rows to match header count.
 			while ( count( $row ) < count( $headers ) ) {
 				$row[] = '';
 			}
 
-			$data  = array_combine( $headers, array_slice( $row, 0, count( $headers ) ) );
-			$title = sanitize_text_field( trim( $data['title'] ) );
+			$data   = array_combine( $headers, array_slice( $row, 0, count( $headers ) ) );
+			$row_id = sanitize_text_field( trim( $data['id'] ?? '' ) );
+			$title  = sanitize_text_field( trim( $data['title'] ?? '' ) );
 
-			if ( $title === '' ) {
+			if ( $row_id === '' && $title === '' ) {
 				$skipped++;
 				continue;
 			}
 
-			// Find existing post by exact title (any non-trash status).
-			// phpcs:ignore WordPress.DB.DirectDatabaseQuery
-			$existing_id = (int) $wpdb->get_var( $wpdb->prepare(
-				"SELECT ID FROM {$wpdb->posts} WHERE post_title = %s AND post_type = %s AND post_status != 'trash' LIMIT 1",
-				$title,
-				self::POST_TYPE
-			) );
+			// Match by id (WordPress post ID) first, then fall back to title.
+			$existing_id = 0;
+			if ( $row_id !== '' ) {
+				$numeric_id = absint( $row_id );
+				if ( $numeric_id ) {
+					$found = get_post( $numeric_id );
+					if ( $found && $found->post_type === self::POST_TYPE && $found->post_status !== 'trash' ) {
+						$existing_id = $found->ID;
+					}
+				}
+			}
+			if ( ! $existing_id && $title !== '' ) {
+				// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+				$existing_id = (int) $wpdb->get_var( $wpdb->prepare(
+					"SELECT ID FROM {$wpdb->posts} WHERE post_title = %s AND post_type = %s AND post_status != 'trash' LIMIT 1",
+					$title,
+					self::POST_TYPE
+				) );
+			}
 
 			$post_args = array(
-				'post_title'  => $title,
 				'post_status' => 'publish',
 				'post_type'   => self::POST_TYPE,
 			);
+			if ( $title !== '' ) {
+				$post_args['post_title'] = $title;
+			}
 
 			if ( $existing_id ) {
 				$post_args['ID'] = $existing_id;
 				$result          = wp_update_post( $post_args, true );
 			} else {
+				if ( $title === '' ) {
+					$skipped++; // Cannot create a post without a title.
+					continue;
+				}
 				$result = wp_insert_post( $post_args, true );
 			}
 
+			$label = $row_id !== '' ? 'id:' . $row_id : $title;
 			if ( is_wp_error( $result ) ) {
-				$errors[] = '"' . $title . '": ' . $result->get_error_message();
+				$errors[] = '"' . $label . '": ' . $result->get_error_message();
 				continue;
 			}
 
 			$post_id = (int) $result;
 
-			// Handle thumbnail: sideload image from URL and set as featured image.
+			// Thumbnail.
 			if ( $has_thumbnail ) {
 				$thumbnail_url = esc_url_raw( trim( $data['thumbnail'] ?? '' ) );
 				if ( $thumbnail_url !== '' ) {
@@ -599,28 +768,67 @@ Portfolio Item 2,,branding</pre>
 				}
 			}
 
-			// Handle categories: pipe-separated names assigned to the primary taxonomy.
-			if ( $has_categories && $primary_taxonomy !== '' ) {
-				$cat_val = trim( $data['categories'] ?? '' );
-				if ( $cat_val !== '' ) {
-					$cat_names = array_filter( array_map( 'sanitize_text_field', explode( '|', $cat_val ) ) );
-					$term_ids  = array();
-					foreach ( $cat_names as $cat_name ) {
-						$term = get_term_by( 'name', $cat_name, $primary_taxonomy );
-						if ( ! $term ) {
-							$term = get_term_by( 'slug', sanitize_title( $cat_name ), $primary_taxonomy );
-						}
-						if ( $term ) {
-							$term_ids[] = $term->term_id;
-						} else {
-							$new_term = wp_insert_term( $cat_name, $primary_taxonomy );
-							if ( ! is_wp_error( $new_term ) ) {
-								$term_ids[] = $new_term['term_id'];
-							}
+			// Parent Category + Sub Category.
+			if ( $primary_taxonomy !== '' && ( $has_parent_cat || $has_sub_cat ) ) {
+				$parent_cat_name = sanitize_text_field( trim( $data['Parent Category'] ?? '' ) );
+				$sub_cat_name    = sanitize_text_field( trim( $data['Sub Category'] ?? '' ) );
+				$term_ids        = array();
+				$parent_term_id  = 0;
+
+				if ( $parent_cat_name !== '' ) {
+					// Find or create the root-level parent term.
+					$existing = get_terms( array(
+						'taxonomy'   => $primary_taxonomy,
+						'name'       => $parent_cat_name,
+						'parent'     => 0,
+						'hide_empty' => false,
+						'fields'     => 'ids',
+					) );
+					if ( ! empty( $existing ) && ! is_wp_error( $existing ) ) {
+						$parent_term_id = (int) $existing[0];
+					} else {
+						$new_term = wp_insert_term( $parent_cat_name, $primary_taxonomy );
+						if ( ! is_wp_error( $new_term ) ) {
+							$parent_term_id = $new_term['term_id'];
 						}
 					}
-					if ( ! empty( $term_ids ) ) {
-						wp_set_object_terms( $post_id, $term_ids, $primary_taxonomy );
+					if ( $parent_term_id ) {
+						$term_ids[] = $parent_term_id;
+					}
+				}
+
+				if ( $sub_cat_name !== '' ) {
+					// Find or create the sub-category, scoped under the parent when available.
+					$sub_args = array(
+						'taxonomy'   => $primary_taxonomy,
+						'name'       => $sub_cat_name,
+						'hide_empty' => false,
+						'fields'     => 'ids',
+					);
+					if ( $parent_term_id ) {
+						$sub_args['parent'] = $parent_term_id;
+					}
+					$existing = get_terms( $sub_args );
+					if ( ! empty( $existing ) && ! is_wp_error( $existing ) ) {
+						$sub_term_id = (int) $existing[0];
+					} else {
+						$insert_args = $parent_term_id ? array( 'parent' => $parent_term_id ) : array();
+						$new_term    = wp_insert_term( $sub_cat_name, $primary_taxonomy, $insert_args );
+						$sub_term_id = ! is_wp_error( $new_term ) ? $new_term['term_id'] : 0;
+					}
+					if ( $sub_term_id ) {
+						$term_ids[] = $sub_term_id;
+					}
+				}
+
+				if ( ! empty( $term_ids ) ) {
+					// Append terms so existing category assignments are preserved.
+					wp_set_object_terms( $post_id, $term_ids, $primary_taxonomy, true );
+					foreach ( $term_ids as $assigned_term_id ) {
+						$pos = $term_positions[ $assigned_term_id ] ?? 0;
+						update_post_meta( $post_id, '_cpo_order_' . $assigned_term_id, $pos );
+						update_option( 'cpo_ordered_term_' . $assigned_term_id, true );
+						$term_positions[ $assigned_term_id ] = $pos + 1;
 					}
 				}
 			}
@@ -634,11 +842,25 @@ Portfolio Item 2,,branding</pre>
 
 		fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 
+		$next_offset = $offset + $consumed;
+		$done        = ( $next_offset >= $job['total'] );
+
+		if ( $done ) {
+			unlink( $job['file'] ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+			delete_transient( 'cpo_import_' . $job_id );
+		} else {
+			// Persist updated term_positions so the next chunk continues from the right offset.
+			$job['term_positions'] = $term_positions;
+			set_transient( 'cpo_import_' . $job_id, $job, HOUR_IN_SECONDS );
+		}
+
 		wp_send_json_success( array(
-			'created' => $created,
-			'updated' => $updated,
-			'skipped' => $skipped,
-			'errors'  => $errors,
+			'created'     => $created,
+			'updated'     => $updated,
+			'skipped'     => $skipped,
+			'errors'      => $errors,
+			'next_offset' => $next_offset,
+			'done'        => $done,
 		) );
 	}
 }
