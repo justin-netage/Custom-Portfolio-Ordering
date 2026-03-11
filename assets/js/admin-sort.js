@@ -804,11 +804,7 @@
 					: attachment.url;
 
 				gridImageChanges[termId] = attachment.id;
-				$btn.data('img-id', attachment.id);
-
-				var $imgWrap = $btn.closest('.cpo-grid-img-wrap');
-				$imgWrap.find('img, .cpo-grid-no-thumb').remove();
-				$imgWrap.prepend('<img src="' + url + '" alt="" />');
+				updateSubCatThumbnail(termId, attachment.id, url);
 			});
 
 			frame.open();
@@ -967,6 +963,37 @@
 
 	// ─── Event bindings & init ────────────────────────────────────────────────
 
+	/**
+	 * Keep the list view, grid modal, and currentItems all in sync when
+	 * an image is chosen for a sub-category (from either picker location).
+	 */
+	function updateSubCatThumbnail(termId, attachmentId, url) {
+		// Update in-memory data so re-opening the modal shows the new image.
+		currentItems.forEach(function (item) {
+			if (item.id === termId) {
+				item.thumbnail = url;
+				item.img_id    = attachmentId;
+			}
+		});
+
+		// Update list-view thumb.
+		var $listWrap = $('#cpo-grid-subcat-list .cpo-thumb-wrap[data-term-id="' + termId + '"]');
+		if ($listWrap.length) {
+			$listWrap.data('img-id', attachmentId);
+			$listWrap.find('img, .cpo-no-thumb').remove();
+			$listWrap.prepend('<img src="' + url + '" alt="" />');
+		}
+
+		// Update grid-modal card (if modal is open).
+		var $editBtn = $('#cpo-grid-sortable .cpo-grid-edit-img-btn[data-term-id="' + termId + '"]');
+		if ($editBtn.length) {
+			$editBtn.data('img-id', attachmentId);
+			var $imgWrap = $editBtn.closest('.cpo-grid-img-wrap');
+			$imgWrap.find('img, .cpo-grid-no-thumb').remove();
+			$imgWrap.prepend('<img src="' + url + '" alt="" />');
+		}
+	}
+
 	// Image picker: opens WP media library filtered to images from that category only.
 	$wrapper.on('click', '.cpo-change-img-btn', function (e) {
 		e.stopPropagation();
@@ -1005,10 +1032,7 @@
 					: attachment.url;
 
 				gridImageChanges[termId] = attachment.id;
-				$wrap.data('img-id', attachment.id);
-				$wrap.find('img').remove();
-				$wrap.find('.cpo-no-thumb').remove();
-				$wrap.prepend('<img src="' + url + '" alt="" />');
+				updateSubCatThumbnail(termId, attachment.id, url);
 			});
 
 			frame.open();
