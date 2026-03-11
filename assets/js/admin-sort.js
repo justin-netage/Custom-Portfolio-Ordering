@@ -82,12 +82,6 @@
 			return;
 		}
 
-		$term.append(
-			$('<option></option>')
-				.val('__root__')
-				.text('— All Parent Categories (Grid View) —')
-		);
-
 		var options = buildTermOptions(window.cpoTerms[tax]);
 		options.forEach(function (opt) {
 			$term.append(
@@ -129,31 +123,8 @@
 		$spinner.addClass('is-active');
 		$wrapper.html('<p class="cpo-placeholder">Loading\u2026</p>');
 
-		if (termId === '__root__') {
-			// Root level: reorder all parent categories in a grid.
-			$('#cpo-preview-grid').prop('disabled', true);
-
-			$.post(cpoData.ajaxUrl, {
-				action:   'cpo_get_parent_cats',
-				nonce:    cpoData.nonce,
-				taxonomy: tax
-			}, function (response) {
-				$spinner.removeClass('is-active');
-
-				if (!response.success) {
-					$wrapper.html('<p class="cpo-error">Error loading parent categories.</p>');
-					return;
-				}
-
-				currentItems = response.data.items;
-				renderParentCatGrid(response.data.items);
-			}).fail(function () {
-				$spinner.removeClass('is-active');
-				$wrapper.html('<p class="cpo-error">Request failed. Please try again.</p>');
-			});
-
-		} else if (termHasChildren(tax, termId)) {
-			// Parent category: reorder sub-category image boxes on the parent page.
+		if (termHasChildren(tax, termId)) {
+			// Parent category: show sub-categories as a sortable list (grid preview also enabled).
 			$('#cpo-preview-grid').prop('disabled', true);
 
 			$.post(cpoData.ajaxUrl, {
@@ -171,6 +142,10 @@
 
 				currentItems = response.data.items;
 				renderGridSubList(response.data.items, response.data.has_page);
+
+				if (currentItems.length) {
+					$('#cpo-preview-grid').prop('disabled', false);
+				}
 			}).fail(function () {
 				$spinner.removeClass('is-active');
 				$wrapper.html('<p class="cpo-error">Request failed. Please try again.</p>');
@@ -340,9 +315,12 @@
 			return;
 		}
 
-		// Build ordered list from the current table DOM (respects unsaved drags).
+		var isSubCatMode = termHasChildren(currentTax, currentTerm);
 		var orderedItems = [];
-		$('#cpo-sortable .cpo-item').each(function () {
+		var $sourceList  = isSubCatMode ? $('#cpo-grid-subcat-list .cpo-item') : $('#cpo-sortable .cpo-item');
+
+		// Build ordered list from the current DOM (respects unsaved drags).
+		$sourceList.each(function () {
 			var id = parseInt($(this).data('id'), 10);
 			for (var i = 0; i < currentItems.length; i++) {
 				if (currentItems[i].id === id) {
@@ -352,30 +330,20 @@
 			}
 		});
 
-		renderGridModal(orderedItems);
+		// Fallback if DOM list isn't populated yet.
+		if (!orderedItems.length) {
+			orderedItems = currentItems.slice();
+		}
+
+		renderGridModal(orderedItems, isSubCatMode);
 	}
 
 	/**
 	 * Build and inject the grid preview modal.
+	 * isSubCatMode: true when showing sub-categories of a parent term.
 	 */
-	function renderGridModal(items) {
+	function renderGridModal(items, isSubCatMode) {
 		var termName = $term.find('option:selected').text();
-
-		// Build taxonomy options (mirrors main select).
-		var taxOptionsHtml = '';
-		$('#cpo-taxonomy option').each(function () {
-			var sel = ($(this).val() === currentTax) ? ' selected' : '';
-			taxOptionsHtml += '<option value="' + escHtml($(this).val()) + '"' + sel + '>' + escHtml($(this).text()) + '</option>';
-		});
-
-		// Build term options for the current taxonomy.
-		var termOptionsHtml = '<option value="">— Select a category —</option>';
-		if (window.cpoTerms && window.cpoTerms[currentTax]) {
-			buildTermOptions(window.cpoTerms[currentTax]).forEach(function (opt) {
-				var sel = (String(opt.id) === String(currentTerm)) ? ' selected' : '';
-				termOptionsHtml += '<option value="' + opt.id + '"' + sel + '>' + escHtml(opt.name + ' (' + opt.count + ')') + '</option>';
-			});
-		}
 
 		var html = '<div id="cpo-preview-overlay" class="cpo-preview-overlay" role="dialog" aria-modal="true" aria-label="Grid Preview">';
 		html += '<div class="cpo-preview-modal">';
@@ -389,14 +357,32 @@
 		// Description.
 		html += '<p class="cpo-preview-desc">Drag cards to reorder, then click <strong>Save Order</strong> to apply. This mimics the front-end grid layout.</p>';
 
-		// Filter bar.
-		html += '<div class="cpo-modal-filter">';
-		html += '<label for="cpo-modal-taxonomy">Taxonomy:</label>';
-		html += '<select id="cpo-modal-taxonomy">' + taxOptionsHtml + '</select>';
-		html += '<label for="cpo-modal-term">Category:</label>';
-		html += '<select id="cpo-modal-term">' + termOptionsHtml + '</select>';
-		html += '<span id="cpo-modal-loading" class="spinner" style="float:none;"></span>';
-		html += '</div>';
+		// Filter bar — only shown in item mode (sub-cats are tied to their parent).
+		if (!isSubCatMode) {
+			// Build taxonomy options (mirrors main select).
+			var taxOptionsHtml = '';
+			$('#cpo-taxonomy option').each(function () {
+				var sel = ($(this).val() === currentTax) ? ' selected' : '';
+				taxOptionsHtml += '<option value="' + escHtml($(this).val()) + '"' + sel + '>' + escHtml($(this).text()) + '</option>';
+			});
+
+			// Build term options for the current taxonomy.
+			var termOptionsHtml = '<option value="">— Select a category —</option>';
+			if (window.cpoTerms && window.cpoTerms[currentTax]) {
+				buildTermOptions(window.cpoTerms[currentTax]).forEach(function (opt) {
+					var sel = (String(opt.id) === String(currentTerm)) ? ' selected' : '';
+					termOptionsHtml += '<option value="' + opt.id + '"' + sel + '>' + escHtml(opt.name + ' (' + opt.count + ')') + '</option>';
+				});
+			}
+
+			html += '<div class="cpo-modal-filter">';
+			html += '<label for="cpo-modal-taxonomy">Taxonomy:</label>';
+			html += '<select id="cpo-modal-taxonomy">' + taxOptionsHtml + '</select>';
+			html += '<label for="cpo-modal-term">Category:</label>';
+			html += '<select id="cpo-modal-term">' + termOptionsHtml + '</select>';
+			html += '<span id="cpo-modal-loading" class="spinner" style="float:none;"></span>';
+			html += '</div>';
+		}
 
 		// Scrollable grid area.
 		html += '<div class="cpo-preview-grid-wrapper">';
@@ -405,14 +391,18 @@
 		items.forEach(function (item, index) {
 			var thumb = item.thumbnail
 				? '<img src="' + item.thumbnail + '" alt="" />'
-				: '<span class="cpo-grid-no-thumb dashicons dashicons-format-image"></span>';
+				: '<span class="cpo-grid-no-thumb dashicons dashicons-' + (isSubCatMode ? 'category' : 'format-image') + '"></span>';
 
 			html += '<li class="cpo-grid-item" data-id="' + item.id + '">';
 			html += '<div class="cpo-grid-card">';
-			html += '<div class="cpo-grid-img-wrap">' + thumb + '<button type="button" class="cpo-grid-delete-btn" data-id="' + item.id + '" title="Move to trash"><span class="dashicons dashicons-trash"></span></button></div>';
+			html += '<div class="cpo-grid-img-wrap">' + thumb;
+			if (!isSubCatMode) {
+				html += '<button type="button" class="cpo-grid-delete-btn" data-id="' + item.id + '" title="Move to trash"><span class="dashicons dashicons-trash"></span></button>';
+			}
+			html += '</div>';
 			html += '<div class="cpo-grid-meta">';
 			html += '<span class="cpo-grid-order-num">' + (index + 1) + '</span>';
-			html += '<span class="cpo-grid-title">' + escHtml(item.title) + '</span>';
+			html += '<span class="cpo-grid-title">' + escHtml(isSubCatMode ? item.name : item.title) + '</span>';
 			html += '</div>';
 			html += '</div>';
 			html += '</li>';
@@ -600,12 +590,13 @@
 	}
 
 	/**
-	 * Save the grid order via AJAX and sync back to the table.
+	 * Save the grid order via AJAX and sync back to the list view.
 	 */
 	function saveOrderFromGrid() {
-		var $btn     = $('#cpo-grid-save-order');
-		var $spin    = $('#cpo-grid-save-spinner');
-		var order    = [];
+		var $btn         = $('#cpo-grid-save-order');
+		var $spin        = $('#cpo-grid-save-spinner');
+		var order        = [];
+		var isSubCatMode = termHasChildren(currentTax, currentTerm);
 
 		$('#cpo-grid-sortable .cpo-grid-item').each(function () {
 			order.push($(this).data('id'));
@@ -618,29 +609,81 @@
 		$btn.prop('disabled', true);
 		$spin.addClass('is-active');
 
-		$.post(cpoData.ajaxUrl, {
-			action:   'cpo_save_order',
-			nonce:    cpoData.nonce,
-			taxonomy: currentTax,
-			term_id:  currentTerm,
-			order:    order
-		}, function (response) {
-			$btn.prop('disabled', false);
-			$spin.removeClass('is-active');
+		if (isSubCatMode) {
+			// Sub-category grid order — update the parent page content.
+			$.post(cpoData.ajaxUrl, {
+				action:   'cpo_save_grid_order',
+				nonce:    cpoData.nonce,
+				taxonomy: currentTax,
+				term_id:  currentTerm,
+				order:    order,
+				images:   {}
+			}, function (response) {
+				$btn.prop('disabled', false);
+				$spin.removeClass('is-active');
 
-			if (response.success) {
-				syncTableToGridOrder(order);
-				showStatus(response.data.message, 'success');
+				if (response.success) {
+					syncSubCatListToGridOrder(order);
+					showStatus(response.data.message, 'success');
+					closePreviewModal();
+				} else {
+					showStatus((response.data && response.data.message) ? response.data.message : 'Error saving order.', 'error');
+					closePreviewModal();
+				}
+			}).fail(function () {
+				$btn.prop('disabled', false);
+				$spin.removeClass('is-active');
+				showStatus('Request failed. Please try again.', 'error');
 				closePreviewModal();
-			} else {
-				showStatus('Error saving order.', 'error');
+			});
+		} else {
+			// Portfolio item order.
+			$.post(cpoData.ajaxUrl, {
+				action:   'cpo_save_order',
+				nonce:    cpoData.nonce,
+				taxonomy: currentTax,
+				term_id:  currentTerm,
+				order:    order
+			}, function (response) {
+				$btn.prop('disabled', false);
+				$spin.removeClass('is-active');
+
+				if (response.success) {
+					syncTableToGridOrder(order);
+					showStatus(response.data.message, 'success');
+					closePreviewModal();
+				} else {
+					showStatus('Error saving order.', 'error');
+					closePreviewModal();
+				}
+			}).fail(function () {
+				$btn.prop('disabled', false);
+				$spin.removeClass('is-active');
+				showStatus('Request failed. Please try again.', 'error');
 				closePreviewModal();
+			});
+		}
+	}
+
+	/**
+	 * Re-order the sub-category list rows to match the saved grid order.
+	 */
+	function syncSubCatListToGridOrder(order) {
+		var $list   = $('#cpo-grid-subcat-list');
+		var itemMap = {};
+
+		$list.find('.cpo-item').each(function () {
+			itemMap[$(this).data('id')] = $(this);
+		});
+
+		order.forEach(function (id) {
+			if (itemMap[id]) {
+				$list.append(itemMap[id]);
 			}
-		}).fail(function () {
-			$btn.prop('disabled', false);
-			$spin.removeClass('is-active');
-			showStatus('Request failed. Please try again.', 'error');
-			closePreviewModal();
+		});
+
+		$list.find('.cpo-item').each(function (index) {
+			$(this).find('.cpo-order-num').text(index + 1);
 		});
 	}
 
@@ -733,117 +776,6 @@
 	$('#cpo-preview-grid').on('click', openPreviewModal);
 
 	// ─── Page Grid Ordering ───────────────────────────────────────────────────
-
-	/**
-	 * Render the sortable parent-category grid.
-	 * Shown when the user selects "All Parent Categories (Grid View)".
-	 */
-	function renderParentCatGrid(items) {
-		if (!items.length) {
-			$wrapper.html('<p class="cpo-placeholder">No parent categories found.</p>');
-			return;
-		}
-
-		var html = '<div class="cpo-list-header">';
-		html += '<span class="cpo-col-order">#</span>';
-		html += '<span class="cpo-col-thumb"></span>';
-		html += '<span class="cpo-col-title">Parent Category</span>';
-		html += '<span class="cpo-col-status">Items</span>';
-		html += '<span class="cpo-col-actions"></span>';
-		html += '</div>';
-		html += '<ul id="cpo-parent-cat-list" class="cpo-sortable">';
-
-		items.forEach(function (item, index) {
-			var imgId  = item.img_id || 0;
-			var inner  = item.thumbnail
-				? '<img src="' + item.thumbnail + '" alt="" />'
-				: '<span class="cpo-no-thumb dashicons dashicons-category"></span>';
-			var thumb  = '<div class="cpo-thumb-wrap" data-term-id="' + item.id + '" data-img-id="' + imgId + '">'
-				+ inner
-				+ '<button type="button" class="cpo-change-img-btn" title="Change image">'
-				+ '<span class="dashicons dashicons-edit"></span>'
-				+ '</button>'
-				+ '</div>';
-
-			html += '<li class="cpo-item" data-id="' + item.id + '">';
-			html += '<span class="cpo-col-order cpo-handle">'
-				+ '<span class="cpo-order-num">' + (index + 1) + '</span>'
-				+ '<span class="dashicons dashicons-menu cpo-drag-icon"></span>'
-				+ '</span>';
-			html += '<span class="cpo-col-thumb">' + thumb + '</span>';
-			html += '<span class="cpo-col-title">' + escHtml(item.name) + '</span>';
-			html += '<span class="cpo-col-status"><span class="cpo-status-badge cpo-status-count">' + item.count + '</span></span>';
-			html += '<span class="cpo-col-actions"></span>';
-			html += '</li>';
-		});
-
-		html += '</ul>';
-		html += '<div class="cpo-actions">';
-		html += '<button type="button" id="cpo-save-parent-cat-grid" class="button button-primary">Save Grid Order</button>';
-		html += '<span id="cpo-parent-cat-save-spinner" class="spinner" style="float:none;"></span>';
-		html += '</div>';
-
-		$wrapper.html(html);
-
-		$('#cpo-parent-cat-list').sortable({
-			handle: '.cpo-handle',
-			placeholder: 'cpo-sortable-placeholder',
-			cursor: 'grabbing',
-			opacity: 0.8,
-			update: function () {
-				$('#cpo-parent-cat-list .cpo-item').each(function (index) {
-					$(this).find('.cpo-order-num').text(index + 1);
-				});
-			}
-		});
-
-		$('#cpo-save-parent-cat-grid').off('click').on('click', saveParentCatGrid);
-	}
-
-	/**
-	 * Save the parent-category grid order via AJAX.
-	 */
-	function saveParentCatGrid() {
-		var $btn  = $('#cpo-save-parent-cat-grid');
-		var $spin = $('#cpo-parent-cat-save-spinner');
-		var order = [];
-
-		$('#cpo-parent-cat-list .cpo-item').each(function () {
-			order.push($(this).data('id'));
-		});
-
-		if (!order.length) {
-			return;
-		}
-
-		$btn.prop('disabled', true);
-		$spin.addClass('is-active');
-
-		$.post(cpoData.ajaxUrl, {
-			action:   'cpo_save_parent_cat_grid',
-			nonce:    cpoData.nonce,
-			taxonomy: currentTax,
-			order:    order,
-			images:   gridImageChanges
-		}, function (response) {
-			$btn.prop('disabled', false);
-			$spin.removeClass('is-active');
-
-			if (response.success) {
-				gridImageChanges = {};
-				showStatus(response.data.message, 'success');
-			} else {
-				showStatus(
-					(response.data && response.data.message) ? response.data.message : 'Error saving grid order.',
-					'error'
-				);
-			}
-		}).fail(function () {
-			$btn.prop('disabled', false);
-			$spin.removeClass('is-active');
-			showStatus('Request failed. Please try again.', 'error');
-		});
-	}
 
 	/**
 	 * Render the sortable sub-category list (parent category mode).
