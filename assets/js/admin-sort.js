@@ -82,6 +82,12 @@
 			return;
 		}
 
+		$term.append(
+			$('<option></option>')
+				.val('__root__')
+				.text('— All Parent Categories (Grid View) —')
+		);
+
 		var options = buildTermOptions(window.cpoTerms[tax]);
 		options.forEach(function (opt) {
 			$term.append(
@@ -123,7 +129,30 @@
 		$spinner.addClass('is-active');
 		$wrapper.html('<p class="cpo-placeholder">Loading\u2026</p>');
 
-		if (termHasChildren(tax, termId)) {
+		if (termId === '__root__') {
+			// Root level: reorder all parent categories in a grid.
+			$('#cpo-preview-grid').prop('disabled', true);
+
+			$.post(cpoData.ajaxUrl, {
+				action:   'cpo_get_parent_cats',
+				nonce:    cpoData.nonce,
+				taxonomy: tax
+			}, function (response) {
+				$spinner.removeClass('is-active');
+
+				if (!response.success) {
+					$wrapper.html('<p class="cpo-error">Error loading parent categories.</p>');
+					return;
+				}
+
+				currentItems = response.data.items;
+				renderParentCatGrid(response.data.items);
+			}).fail(function () {
+				$spinner.removeClass('is-active');
+				$wrapper.html('<p class="cpo-error">Request failed. Please try again.</p>');
+			});
+
+		} else if (termHasChildren(tax, termId)) {
 			// Parent category: reorder sub-category image boxes on the parent page.
 			$('#cpo-preview-grid').prop('disabled', true);
 
@@ -706,6 +735,117 @@
 	// ─── Page Grid Ordering ───────────────────────────────────────────────────
 
 	/**
+	 * Render the sortable parent-category grid.
+	 * Shown when the user selects "All Parent Categories (Grid View)".
+	 */
+	function renderParentCatGrid(items) {
+		if (!items.length) {
+			$wrapper.html('<p class="cpo-placeholder">No parent categories found.</p>');
+			return;
+		}
+
+		var html = '<div class="cpo-list-header">';
+		html += '<span class="cpo-col-order">#</span>';
+		html += '<span class="cpo-col-thumb"></span>';
+		html += '<span class="cpo-col-title">Parent Category</span>';
+		html += '<span class="cpo-col-status">Items</span>';
+		html += '<span class="cpo-col-actions"></span>';
+		html += '</div>';
+		html += '<ul id="cpo-parent-cat-list" class="cpo-sortable">';
+
+		items.forEach(function (item, index) {
+			var imgId  = item.img_id || 0;
+			var inner  = item.thumbnail
+				? '<img src="' + item.thumbnail + '" alt="" />'
+				: '<span class="cpo-no-thumb dashicons dashicons-category"></span>';
+			var thumb  = '<div class="cpo-thumb-wrap" data-term-id="' + item.id + '" data-img-id="' + imgId + '">'
+				+ inner
+				+ '<button type="button" class="cpo-change-img-btn" title="Change image">'
+				+ '<span class="dashicons dashicons-edit"></span>'
+				+ '</button>'
+				+ '</div>';
+
+			html += '<li class="cpo-item" data-id="' + item.id + '">';
+			html += '<span class="cpo-col-order cpo-handle">'
+				+ '<span class="cpo-order-num">' + (index + 1) + '</span>'
+				+ '<span class="dashicons dashicons-menu cpo-drag-icon"></span>'
+				+ '</span>';
+			html += '<span class="cpo-col-thumb">' + thumb + '</span>';
+			html += '<span class="cpo-col-title">' + escHtml(item.name) + '</span>';
+			html += '<span class="cpo-col-status"><span class="cpo-status-badge cpo-status-count">' + item.count + '</span></span>';
+			html += '<span class="cpo-col-actions"></span>';
+			html += '</li>';
+		});
+
+		html += '</ul>';
+		html += '<div class="cpo-actions">';
+		html += '<button type="button" id="cpo-save-parent-cat-grid" class="button button-primary">Save Grid Order</button>';
+		html += '<span id="cpo-parent-cat-save-spinner" class="spinner" style="float:none;"></span>';
+		html += '</div>';
+
+		$wrapper.html(html);
+
+		$('#cpo-parent-cat-list').sortable({
+			handle: '.cpo-handle',
+			placeholder: 'cpo-sortable-placeholder',
+			cursor: 'grabbing',
+			opacity: 0.8,
+			update: function () {
+				$('#cpo-parent-cat-list .cpo-item').each(function (index) {
+					$(this).find('.cpo-order-num').text(index + 1);
+				});
+			}
+		});
+
+		$('#cpo-save-parent-cat-grid').off('click').on('click', saveParentCatGrid);
+	}
+
+	/**
+	 * Save the parent-category grid order via AJAX.
+	 */
+	function saveParentCatGrid() {
+		var $btn  = $('#cpo-save-parent-cat-grid');
+		var $spin = $('#cpo-parent-cat-save-spinner');
+		var order = [];
+
+		$('#cpo-parent-cat-list .cpo-item').each(function () {
+			order.push($(this).data('id'));
+		});
+
+		if (!order.length) {
+			return;
+		}
+
+		$btn.prop('disabled', true);
+		$spin.addClass('is-active');
+
+		$.post(cpoData.ajaxUrl, {
+			action:   'cpo_save_parent_cat_grid',
+			nonce:    cpoData.nonce,
+			taxonomy: currentTax,
+			order:    order,
+			images:   gridImageChanges
+		}, function (response) {
+			$btn.prop('disabled', false);
+			$spin.removeClass('is-active');
+
+			if (response.success) {
+				gridImageChanges = {};
+				showStatus(response.data.message, 'success');
+			} else {
+				showStatus(
+					(response.data && response.data.message) ? response.data.message : 'Error saving grid order.',
+					'error'
+				);
+			}
+		}).fail(function () {
+			$btn.prop('disabled', false);
+			$spin.removeClass('is-active');
+			showStatus('Request failed. Please try again.', 'error');
+		});
+	}
+
+	/**
 	 * Render the sortable sub-category list (parent category mode).
 	 * Renders into the shared #cpo-list-wrapper.
 	 */
@@ -831,48 +971,66 @@
 
 	// ─── Event bindings & init ────────────────────────────────────────────────
 
-	// Image picker: opens WP media library for the clicked sub-category thumbnail.
+	// Image picker: opens WP media library filtered to images from that category only.
 	$wrapper.on('click', '.cpo-change-img-btn', function (e) {
 		e.stopPropagation();
 
-		var $wrap     = $(this).closest('.cpo-thumb-wrap');
-		var termId    = parseInt($wrap.data('term-id'), 10);
-		var currentId = parseInt($wrap.data('img-id'), 10) || 0;
+		var $wrap            = $(this).closest('.cpo-thumb-wrap');
+		var termId           = parseInt($wrap.data('term-id'), 10);
+		var currentId        = parseInt($wrap.data('img-id'), 10) || 0;
+		var includeChildren  = (currentTerm === '__root__') ? 1 : 0;
 
-		var frame = wp.media({
-			title:   'Select Image',
-			button:  { text: 'Use this image' },
-			multiple: false,
-			library:  { type: 'image' }
-		});
+		function openMediaFrame(attachmentIds) {
+			var libraryQuery = { type: 'image' };
+			if (attachmentIds && attachmentIds.length > 0) {
+				libraryQuery.post__in = attachmentIds;
+			}
 
-		// Pre-select the current image when the frame opens.
-		if (currentId) {
-			frame.on('open', function () {
-				var selection  = frame.state().get('selection');
-				var attachment = wp.media.attachment(currentId);
-				attachment.fetch();
-				selection.add(attachment ? [attachment] : []);
+			var frame = wp.media({
+				title:    'Select Image',
+				button:   { text: 'Use this image' },
+				multiple: false,
+				library:  libraryQuery
 			});
+
+			if (currentId) {
+				frame.on('open', function () {
+					var selection  = frame.state().get('selection');
+					var attachment = wp.media.attachment(currentId);
+					attachment.fetch();
+					selection.add(attachment ? [attachment] : []);
+				});
+			}
+
+			frame.on('select', function () {
+				var attachment = frame.state().get('selection').first().toJSON();
+				var url        = (attachment.sizes && attachment.sizes.medium)
+					? attachment.sizes.medium.url
+					: attachment.url;
+
+				gridImageChanges[termId] = attachment.id;
+				$wrap.data('img-id', attachment.id);
+				$wrap.find('img').remove();
+				$wrap.find('.cpo-no-thumb').remove();
+				$wrap.prepend('<img src="' + url + '" alt="" />');
+			});
+
+			frame.open();
 		}
 
-		frame.on('select', function () {
-			var attachment = frame.state().get('selection').first().toJSON();
-			var url        = (attachment.sizes && attachment.sizes.medium)
-				? attachment.sizes.medium.url
-				: attachment.url;
-
-			// Store the change for submission.
-			gridImageChanges[termId] = attachment.id;
-
-			// Update the thumbnail preview immediately.
-			$wrap.data('img-id', attachment.id);
-			$wrap.find('img').remove();
-			$wrap.find('.cpo-no-thumb').remove();
-			$wrap.prepend('<img src="' + url + '" alt="" />');
+		// Fetch attachment IDs for this term, then open the picker filtered to those images.
+		$.post(cpoData.ajaxUrl, {
+			action:           'cpo_get_term_images',
+			nonce:            cpoData.nonce,
+			taxonomy:         currentTax,
+			term_id:          termId,
+			include_children: includeChildren
+		}, function (response) {
+			var ids = (response.success && response.data.ids.length > 0) ? response.data.ids : null;
+			openMediaFrame(ids);
+		}).fail(function () {
+			openMediaFrame(null);
 		});
-
-		frame.open();
 	});
 
 	// Initialize on page load.
