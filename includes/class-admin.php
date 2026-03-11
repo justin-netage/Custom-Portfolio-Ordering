@@ -295,11 +295,12 @@ class CPO_Admin {
 		}
 
 		wp_enqueue_script( 'jquery-ui-sortable' );
+		wp_enqueue_media();
 
 		wp_enqueue_script(
 			'cpo-admin-sort',
 			CPO_PLUGIN_URL . 'assets/js/admin-sort.js',
-			array( 'jquery', 'jquery-ui-sortable' ),
+			array( 'jquery', 'jquery-ui-sortable', 'media-editor' ),
 			CPO_VERSION,
 			true
 		);
@@ -607,37 +608,62 @@ class CPO_Admin {
 			'post_parent'    => 0,
 		) );
 
-		$page_id       = 0;
-		$ordered_slugs = array();
+		$page_id        = 0;
+		$ordered_slugs  = array();
+		$slug_to_img_id = array();
 
 		if ( ! empty( $parent_pages ) ) {
 			$page_id = $parent_pages[0]->ID;
 			$content = $parent_pages[0]->post_content;
 
-			// Extract sub-category order from the grid row link attributes.
+			// Extract sub-category order and current img IDs from the grid row.
 			if ( preg_match( '/\[row width="full-width"\](.*?)\[\/row\]/s', $content, $row_match ) ) {
 				preg_match_all( '/link="[^"]*\/([^"\/]+)"/', $row_match[1], $link_matches );
 				$ordered_slugs = $link_matches[1] ?? array();
+
+				preg_match_all( '/\[col[^\]]*\].*?\[\/col\]/s', $row_match[1], $col_matches );
+				foreach ( $col_matches[0] ?? array() as $col ) {
+					if ( preg_match( '/link="[^"]*\/([^"\/]+)"/', $col, $lm )
+						&& preg_match( '/\bimg="(\d+)"/', $col, $im )
+					) {
+						$slug_to_img_id[ $lm[1] ] = (int) $im[1];
+					}
+				}
 			}
 		}
 
-		// Build items with a representative thumbnail from each sub-category.
+		// Build items: prefer the img already set on the page, fall back to
+		// the first portfolio item's featured image if the page doesn't exist yet.
 		$slug_to_item = array();
 		foreach ( $sub_terms as $term ) {
-			$posts = get_posts( array(
-				'post_type'      => self::POST_TYPE,
-				'post_status'    => 'publish',
-				'posts_per_page' => 1,
-				'tax_query'      => array( array(
-					'taxonomy' => $taxonomy,
-					'field'    => 'term_id',
-					'terms'    => $term->term_id,
-				) ),
-			) );
-
+			$img_id    = $slug_to_img_id[ $term->slug ] ?? 0;
 			$thumbnail = '';
-			if ( ! empty( $posts ) ) {
-				$thumbnail = get_the_post_thumbnail_url( $posts[0]->ID, 'medium' ) ?: '';
+
+			if ( $img_id ) {
+				$src = wp_get_attachment_image_src( $img_id, 'medium' );
+				if ( $src ) {
+					$thumbnail = $src[0];
+				}
+			}
+
+			if ( ! $thumbnail ) {
+				$posts = get_posts( array(
+					'post_type'      => self::POST_TYPE,
+					'post_status'    => 'publish',
+					'posts_per_page' => 1,
+					'tax_query'      => array( array(
+						'taxonomy' => $taxonomy,
+						'field'    => 'term_id',
+						'terms'    => $term->term_id,
+					) ),
+				) );
+
+				if ( ! empty( $posts ) ) {
+					$thumbnail = get_the_post_thumbnail_url( $posts[0]->ID, 'medium' ) ?: '';
+					if ( ! $img_id ) {
+						$img_id = (int) get_post_thumbnail_id( $posts[0]->ID );
+					}
+				}
 			}
 
 			$slug_to_item[ $term->slug ] = array(
@@ -646,6 +672,7 @@ class CPO_Admin {
 				'slug'      => $term->slug,
 				'count'     => $term->count,
 				'thumbnail' => $thumbnail,
+				'img_id'    => $img_id,
 			);
 		}
 
@@ -681,6 +708,14 @@ class CPO_Admin {
 		$taxonomy  = sanitize_text_field( wp_unslash( $_POST['taxonomy'] ?? '' ) );
 		$parent_id = absint( $_POST['term_id'] ?? 0 );
 		$order     = isset( $_POST['order'] ) ? array_map( 'absint', $_POST['order'] ) : array();
+
+		// Optional per-item image overrides: images[term_id] => attachment_id.
+		$images = array();
+		if ( ! empty( $_POST['images'] ) && is_array( $_POST['images'] ) ) {
+			foreach ( $_POST['images'] as $tid => $aid ) {
+				$images[ absint( $tid ) ] = absint( $aid );
+			}
+		}
 
 		if ( empty( $taxonomy ) || empty( $parent_id ) || empty( $order ) ) {
 			wp_send_json_error( 'Missing parameters' );
@@ -725,12 +760,17 @@ class CPO_Admin {
 			}
 		}
 
-		// Reorder cols by the submitted term ID sequence.
+		// Reorder cols by the submitted term ID sequence, applying any image changes.
 		$new_cols = array();
 		foreach ( $order as $term_id ) {
 			$term = get_term( $term_id, $taxonomy );
 			if ( $term && ! is_wp_error( $term ) && isset( $slug_to_col[ $term->slug ] ) ) {
-				$new_cols[] = $slug_to_col[ $term->slug ];
+				$col = $slug_to_col[ $term->slug ];
+				if ( ! empty( $images[ $term_id ] ) ) {
+					$new_img = $images[ $term_id ];
+					$col     = preg_replace( '/(\[ux_image_box[^\]]*\bimg=")[^"]*(")/s', '${1}' . $new_img . '${2}', $col );
+				}
+				$new_cols[] = $col;
 				unset( $slug_to_col[ $term->slug ] );
 			}
 		}

@@ -251,11 +251,53 @@
 	object-fit: cover;
 	border-radius: 3px;
 	border: 1px solid #ddd;
+	display: block;
 }
 
 .cpo-no-thumb {
 	color: #ccc;
 	font-size: 28px;
+}
+
+/* Sub-category thumbnail wrapper (grid ordering mode) */
+.cpo-thumb-wrap {
+	position: relative;
+	display: inline-block;
+	width: 40px;
+	height: 40px;
+	line-height: 0;
+}
+
+.cpo-thumb-wrap .cpo-no-thumb {
+	line-height: 40px;
+}
+
+/* Edit-image overlay button */
+.cpo-change-img-btn {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	background: rgba(0, 0, 0, 0.48);
+	border: none;
+	border-radius: 3px;
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	opacity: 0;
+	transition: opacity 0.15s ease;
+	padding: 0;
+}
+
+.cpo-item:hover .cpo-change-img-btn {
+	opacity: 1;
+}
+
+.cpo-change-img-btn .dashicons {
+	color: #fff;
+	font-size: 14px;
+	width: 14px;
+	height: 14px;
 }
 
 /* Status badge */

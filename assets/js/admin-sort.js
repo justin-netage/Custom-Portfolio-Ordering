@@ -6,9 +6,10 @@
 	var $wrapper    = $('#cpo-list-wrapper');
 	var $status     = $('#cpo-status');
 	var $spinner    = $('#cpo-loading');
-	var currentTerm = null;
-	var currentTax  = null;
-	var currentItems = [];
+	var currentTerm      = null;
+	var currentTax       = null;
+	var currentItems     = [];
+	var gridImageChanges = {}; // term_id → new attachment ID, pending save
 
 	/**
 	 * Show a status message.
@@ -115,8 +116,9 @@
 			return;
 		}
 
-		currentTax  = tax;
-		currentTerm = termId;
+		currentTax       = tax;
+		currentTerm      = termId;
+		gridImageChanges = {};
 
 		$spinner.addClass('is-active');
 		$wrapper.html('<p class="cpo-placeholder">Loading\u2026</p>');
@@ -733,9 +735,16 @@
 		html += '<ul id="cpo-grid-subcat-list" class="cpo-sortable">';
 
 		items.forEach(function (item, index) {
-			var thumb = item.thumbnail
+			var imgId  = item.img_id || 0;
+			var inner  = item.thumbnail
 				? '<img src="' + item.thumbnail + '" alt="" />'
 				: '<span class="cpo-no-thumb dashicons dashicons-category"></span>';
+			var thumb  = '<div class="cpo-thumb-wrap" data-term-id="' + item.id + '" data-img-id="' + imgId + '">'
+				+ inner
+				+ '<button type="button" class="cpo-change-img-btn" title="Change image">'
+				+ '<span class="dashicons dashicons-edit"></span>'
+				+ '</button>'
+				+ '</div>';
 
 			html += '<li class="cpo-item" data-id="' + item.id + '">';
 			html += '<span class="cpo-col-order cpo-handle">'
@@ -798,12 +807,14 @@
 			nonce:    cpoData.nonce,
 			taxonomy: currentTax,
 			term_id:  currentTerm,
-			order:    order
+			order:    order,
+			images:   gridImageChanges
 		}, function (response) {
 			$btn.prop('disabled', false);
 			$spin.removeClass('is-active');
 
 			if (response.success) {
+				gridImageChanges = {};
 				showStatus(response.data.message, 'success');
 			} else {
 				showStatus(
@@ -819,6 +830,50 @@
 	}
 
 	// ─── Event bindings & init ────────────────────────────────────────────────
+
+	// Image picker: opens WP media library for the clicked sub-category thumbnail.
+	$wrapper.on('click', '.cpo-change-img-btn', function (e) {
+		e.stopPropagation();
+
+		var $wrap     = $(this).closest('.cpo-thumb-wrap');
+		var termId    = parseInt($wrap.data('term-id'), 10);
+		var currentId = parseInt($wrap.data('img-id'), 10) || 0;
+
+		var frame = wp.media({
+			title:   'Select Image',
+			button:  { text: 'Use this image' },
+			multiple: false,
+			library:  { type: 'image' }
+		});
+
+		// Pre-select the current image when the frame opens.
+		if (currentId) {
+			frame.on('open', function () {
+				var selection  = frame.state().get('selection');
+				var attachment = wp.media.attachment(currentId);
+				attachment.fetch();
+				selection.add(attachment ? [attachment] : []);
+			});
+		}
+
+		frame.on('select', function () {
+			var attachment = frame.state().get('selection').first().toJSON();
+			var url        = (attachment.sizes && attachment.sizes.medium)
+				? attachment.sizes.medium.url
+				: attachment.url;
+
+			// Store the change for submission.
+			gridImageChanges[termId] = attachment.id;
+
+			// Update the thumbnail preview immediately.
+			$wrap.data('img-id', attachment.id);
+			$wrap.find('img').remove();
+			$wrap.find('.cpo-no-thumb').remove();
+			$wrap.prepend('<img src="' + url + '" alt="" />');
+		});
+
+		frame.open();
+	});
 
 	// Initialize on page load.
 	loadTerms();
