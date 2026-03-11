@@ -6,9 +6,10 @@
 	var $wrapper    = $('#cpo-list-wrapper');
 	var $status     = $('#cpo-status');
 	var $spinner    = $('#cpo-loading');
-	var currentTerm = null;
-	var currentTax  = null;
-	var currentItems = [];
+	var currentTerm      = null;
+	var currentTax       = null;
+	var currentItems     = [];
+	var gridImageChanges = {}; // term_id → new attachment ID, pending save
 
 	/**
 	 * Show a status message.
@@ -92,7 +93,18 @@
 	}
 
 	/**
+	 * Return true if the given term has child terms in the loaded term data.
+	 */
+	function termHasChildren(tax, termId) {
+		if (!window.cpoTerms || !window.cpoTerms[tax]) return false;
+		var id = parseInt(termId, 10);
+		return window.cpoTerms[tax].some(function (t) { return t.parent === id; });
+	}
+
+	/**
 	 * Load items for the selected term.
+	 * Parent categories → sub-category grid ordering.
+	 * Sub-categories   → portfolio item ordering (existing behaviour).
 	 */
 	function loadItems() {
 		var tax    = $taxonomy.val();
@@ -104,42 +116,70 @@
 			return;
 		}
 
-		currentTax  = tax;
-		currentTerm = termId;
+		currentTax       = tax;
+		currentTerm      = termId;
+		gridImageChanges = {};
 
 		$spinner.addClass('is-active');
-		$wrapper.html('<p class="cpo-placeholder">Loading items...</p>');
+		$wrapper.html('<p class="cpo-placeholder">Loading\u2026</p>');
 
-		$.post(cpoData.ajaxUrl, {
-			action:   'cpo_get_items',
-			nonce:    cpoData.nonce,
-			taxonomy: tax,
-			term_id:  termId
-		}, function (response) {
-			$spinner.removeClass('is-active');
-
-			if (!response.success) {
-				$wrapper.html('<p class="cpo-error">Error loading items.</p>');
-				$('#cpo-preview-grid').prop('disabled', true);
-				return;
-			}
-
-			var items = response.data.items;
-
-			if (!items.length) {
-				$wrapper.html('<p class="cpo-placeholder">No portfolio items found in this category.</p>');
-				$('#cpo-preview-grid').prop('disabled', true);
-				return;
-			}
-
-			currentItems = items;
-			renderList(items);
-			$('#cpo-preview-grid').prop('disabled', false);
-		}).fail(function () {
-			$spinner.removeClass('is-active');
-			$wrapper.html('<p class="cpo-error">Request failed. Please try again.</p>');
+		if (termHasChildren(tax, termId)) {
+			// Parent category: reorder sub-category image boxes on the parent page.
 			$('#cpo-preview-grid').prop('disabled', true);
-		});
+
+			$.post(cpoData.ajaxUrl, {
+				action:   'cpo_get_sub_cats',
+				nonce:    cpoData.nonce,
+				taxonomy: tax,
+				term_id:  termId
+			}, function (response) {
+				$spinner.removeClass('is-active');
+
+				if (!response.success) {
+					$wrapper.html('<p class="cpo-error">Error loading sub-categories.</p>');
+					return;
+				}
+
+				currentItems = response.data.items;
+				renderGridSubList(response.data.items, response.data.has_page);
+			}).fail(function () {
+				$spinner.removeClass('is-active');
+				$wrapper.html('<p class="cpo-error">Request failed. Please try again.</p>');
+			});
+
+		} else {
+			// Sub-category: reorder individual portfolio items.
+			$.post(cpoData.ajaxUrl, {
+				action:   'cpo_get_items',
+				nonce:    cpoData.nonce,
+				taxonomy: tax,
+				term_id:  termId
+			}, function (response) {
+				$spinner.removeClass('is-active');
+
+				if (!response.success) {
+					$wrapper.html('<p class="cpo-error">Error loading items.</p>');
+					$('#cpo-preview-grid').prop('disabled', true);
+					return;
+				}
+
+				var items = response.data.items;
+
+				if (!items.length) {
+					$wrapper.html('<p class="cpo-placeholder">No portfolio items found in this category.</p>');
+					$('#cpo-preview-grid').prop('disabled', true);
+					return;
+				}
+
+				currentItems = items;
+				renderList(items);
+				$('#cpo-preview-grid').prop('disabled', false);
+			}).fail(function () {
+				$spinner.removeClass('is-active');
+				$wrapper.html('<p class="cpo-error">Request failed. Please try again.</p>');
+				$('#cpo-preview-grid').prop('disabled', true);
+			});
+		}
 	}
 
 	/**
@@ -662,6 +702,178 @@
 
 	// Grid Preview button (lives in controls bar).
 	$('#cpo-preview-grid').on('click', openPreviewModal);
+
+	// ─── Page Grid Ordering ───────────────────────────────────────────────────
+
+	/**
+	 * Render the sortable sub-category list (parent category mode).
+	 * Renders into the shared #cpo-list-wrapper.
+	 */
+	function renderGridSubList(items, hasPage) {
+		var html = '';
+
+		if (!hasPage) {
+			html += '<div class="cpo-notice cpo-notice-warning">'
+				+ '<span class="dashicons dashicons-warning"></span> '
+				+ 'No parent page found for this category. Create it first using the page auto-creation batch tool, then return here to set the grid order.'
+				+ '</div>';
+		}
+
+		if (!items.length) {
+			html += '<p class="cpo-placeholder">No sub-categories found.</p>';
+			$wrapper.html(html);
+			return;
+		}
+
+		html += '<div class="cpo-list-header">';
+		html += '<span class="cpo-col-order">#</span>';
+		html += '<span class="cpo-col-thumb"></span>';
+		html += '<span class="cpo-col-title">Sub-Category</span>';
+		html += '<span class="cpo-col-status">Items</span>';
+		html += '<span class="cpo-col-actions"></span>';
+		html += '</div>';
+		html += '<ul id="cpo-grid-subcat-list" class="cpo-sortable">';
+
+		items.forEach(function (item, index) {
+			var imgId  = item.img_id || 0;
+			var inner  = item.thumbnail
+				? '<img src="' + item.thumbnail + '" alt="" />'
+				: '<span class="cpo-no-thumb dashicons dashicons-category"></span>';
+			var thumb  = '<div class="cpo-thumb-wrap" data-term-id="' + item.id + '" data-img-id="' + imgId + '">'
+				+ inner
+				+ '<button type="button" class="cpo-change-img-btn" title="Change image">'
+				+ '<span class="dashicons dashicons-edit"></span>'
+				+ '</button>'
+				+ '</div>';
+
+			html += '<li class="cpo-item" data-id="' + item.id + '">';
+			html += '<span class="cpo-col-order cpo-handle">'
+				+ '<span class="cpo-order-num">' + (index + 1) + '</span>'
+				+ '<span class="dashicons dashicons-menu cpo-drag-icon"></span>'
+				+ '</span>';
+			html += '<span class="cpo-col-thumb">' + thumb + '</span>';
+			html += '<span class="cpo-col-title">' + escHtml(item.name) + '</span>';
+			html += '<span class="cpo-col-status"><span class="cpo-status-badge cpo-status-count">' + item.count + '</span></span>';
+			html += '<span class="cpo-col-actions"></span>';
+			html += '</li>';
+		});
+
+		html += '</ul>';
+		html += '<div class="cpo-actions">';
+		if (hasPage) {
+			html += '<button type="button" id="cpo-save-grid-order" class="button button-primary">Save Grid Order</button>';
+			html += '<span id="cpo-grid-save-spinner" class="spinner" style="float:none;"></span>';
+		}
+		html += '</div>';
+
+		$wrapper.html(html);
+
+		$('#cpo-grid-subcat-list').sortable({
+			handle: '.cpo-handle',
+			placeholder: 'cpo-sortable-placeholder',
+			cursor: 'grabbing',
+			opacity: 0.8,
+			update: function () {
+				$('#cpo-grid-subcat-list .cpo-item').each(function (index) {
+					$(this).find('.cpo-order-num').text(index + 1);
+				});
+			}
+		});
+
+		$('#cpo-save-grid-order').off('click').on('click', saveGridOrder);
+	}
+
+	/**
+	 * Save the sub-category grid order via AJAX.
+	 */
+	function saveGridOrder() {
+		var $btn  = $('#cpo-save-grid-order');
+		var $spin = $('#cpo-grid-save-spinner');
+		var order = [];
+
+		$('#cpo-grid-subcat-list .cpo-item').each(function () {
+			order.push($(this).data('id'));
+		});
+
+		if (!order.length || !currentTerm) {
+			return;
+		}
+
+		$btn.prop('disabled', true);
+		$spin.addClass('is-active');
+
+		$.post(cpoData.ajaxUrl, {
+			action:   'cpo_save_grid_order',
+			nonce:    cpoData.nonce,
+			taxonomy: currentTax,
+			term_id:  currentTerm,
+			order:    order,
+			images:   gridImageChanges
+		}, function (response) {
+			$btn.prop('disabled', false);
+			$spin.removeClass('is-active');
+
+			if (response.success) {
+				gridImageChanges = {};
+				showStatus(response.data.message, 'success');
+			} else {
+				showStatus(
+					(response.data && response.data.message) ? response.data.message : 'Error saving grid order.',
+					'error'
+				);
+			}
+		}).fail(function () {
+			$btn.prop('disabled', false);
+			$spin.removeClass('is-active');
+			showStatus('Request failed. Please try again.', 'error');
+		});
+	}
+
+	// ─── Event bindings & init ────────────────────────────────────────────────
+
+	// Image picker: opens WP media library for the clicked sub-category thumbnail.
+	$wrapper.on('click', '.cpo-change-img-btn', function (e) {
+		e.stopPropagation();
+
+		var $wrap     = $(this).closest('.cpo-thumb-wrap');
+		var termId    = parseInt($wrap.data('term-id'), 10);
+		var currentId = parseInt($wrap.data('img-id'), 10) || 0;
+
+		var frame = wp.media({
+			title:   'Select Image',
+			button:  { text: 'Use this image' },
+			multiple: false,
+			library:  { type: 'image' }
+		});
+
+		// Pre-select the current image when the frame opens.
+		if (currentId) {
+			frame.on('open', function () {
+				var selection  = frame.state().get('selection');
+				var attachment = wp.media.attachment(currentId);
+				attachment.fetch();
+				selection.add(attachment ? [attachment] : []);
+			});
+		}
+
+		frame.on('select', function () {
+			var attachment = frame.state().get('selection').first().toJSON();
+			var url        = (attachment.sizes && attachment.sizes.medium)
+				? attachment.sizes.medium.url
+				: attachment.url;
+
+			// Store the change for submission.
+			gridImageChanges[termId] = attachment.id;
+
+			// Update the thumbnail preview immediately.
+			$wrap.data('img-id', attachment.id);
+			$wrap.find('img').remove();
+			$wrap.find('.cpo-no-thumb').remove();
+			$wrap.prepend('<img src="' + url + '" alt="" />');
+		});
+
+		frame.open();
+	});
 
 	// Initialize on page load.
 	loadTerms();

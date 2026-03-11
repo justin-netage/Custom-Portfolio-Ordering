@@ -13,6 +13,99 @@
 	color: #666;
 }
 
+/* ─── View toggle ───────────────────────────────────────────────────────── */
+
+.cpo-view-toggle {
+	display: flex;
+	gap: 0;
+	margin: 16px 0 0;
+	border-bottom: 1px solid #ccd0d4;
+}
+
+.cpo-view-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	padding: 9px 18px;
+	background: #f0f0f1;
+	border: 1px solid #ccd0d4;
+	border-bottom: none;
+	border-right: none;
+	cursor: pointer;
+	font-size: 13px;
+	font-weight: 500;
+	color: #3c434a;
+	border-radius: 4px 4px 0 0;
+	position: relative;
+	bottom: -1px;
+	transition: background 0.1s ease, color 0.1s ease;
+}
+
+.cpo-view-btn:last-child {
+	border-right: 1px solid #ccd0d4;
+}
+
+.cpo-view-btn .dashicons {
+	font-size: 15px;
+	width: 15px;
+	height: 15px;
+}
+
+.cpo-view-btn:hover {
+	background: #fff;
+	color: #1d2327;
+}
+
+.cpo-view-btn.active {
+	background: #fff;
+	color: #1d2327;
+	border-bottom-color: #fff;
+	font-weight: 600;
+}
+
+/* View panes */
+.cpo-view-pane {
+	padding-top: 20px;
+}
+
+.cpo-view-desc {
+	margin: 0 0 16px;
+	color: #666;
+	font-size: 13px;
+}
+
+/* ─── Notice ─────────────────────────────────────────────────────────────── */
+
+.cpo-notice {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 10px 14px;
+	margin-bottom: 16px;
+	border-radius: 4px;
+	font-size: 13px;
+}
+
+.cpo-notice-warning {
+	background: #fff8e5;
+	border: 1px solid #f0c040;
+	color: #7a5c00;
+}
+
+.cpo-notice-warning .dashicons {
+	color: #dba617;
+	font-size: 18px;
+	width: 18px;
+	height: 18px;
+	flex-shrink: 0;
+}
+
+/* Item-count badge (neutral grey, used in grid sub-cat list) */
+.cpo-status-count {
+	background: #e2e4e7;
+	color: #555;
+}
+
 /* Controls bar */
 .cpo-controls {
 	display: flex;
@@ -158,11 +251,53 @@
 	object-fit: cover;
 	border-radius: 3px;
 	border: 1px solid #ddd;
+	display: block;
 }
 
 .cpo-no-thumb {
 	color: #ccc;
 	font-size: 28px;
+}
+
+/* Sub-category thumbnail wrapper (grid ordering mode) */
+.cpo-thumb-wrap {
+	position: relative;
+	display: inline-block;
+	width: 40px;
+	height: 40px;
+	line-height: 0;
+}
+
+.cpo-thumb-wrap .cpo-no-thumb {
+	line-height: 40px;
+}
+
+/* Edit-image overlay button */
+.cpo-change-img-btn {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	background: rgba(0, 0, 0, 0.48);
+	border: none;
+	border-radius: 3px;
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	opacity: 0;
+	transition: opacity 0.15s ease;
+	padding: 0;
+}
+
+.cpo-item:hover .cpo-change-img-btn {
+	opacity: 1;
+}
+
+.cpo-change-img-btn .dashicons {
+	color: #fff;
+	font-size: 14px;
+	width: 14px;
+	height: 14px;
 }
 
 /* Status badge */
