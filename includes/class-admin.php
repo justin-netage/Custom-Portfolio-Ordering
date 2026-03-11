@@ -22,6 +22,8 @@ class CPO_Admin {
 		add_action( 'wp_ajax_cpo_import_start', array( $this, 'ajax_import_start' ) );
 		add_action( 'wp_ajax_cpo_import_chunk', array( $this, 'ajax_import_chunk' ) );
 		add_action( 'wp_ajax_cpo_delete_item', array( $this, 'ajax_delete_item' ) );
+		add_action( 'wp_ajax_cpo_get_sub_cats', array( $this, 'ajax_get_sub_cats' ) );
+		add_action( 'wp_ajax_cpo_save_grid_order', array( $this, 'ajax_save_grid_order' ) );
 	}
 
 	/**
@@ -323,37 +325,78 @@ class CPO_Admin {
 		?>
 		<div class="wrap cpo-wrap">
 			<h1><?php esc_html_e( 'Portfolio Ordering', 'custom-portfolio-ordering' ); ?></h1>
-			<p class="description"><?php esc_html_e( 'Select a category below, then drag and drop items to set a custom display order. The order is applied across the entire site.', 'custom-portfolio-ordering' ); ?></p>
+			<p class="description"><?php esc_html_e( 'Use Portfolio Items to set the order of individual items within a category. Use Page Grid Ordering to set the order of sub-category boxes on a parent category page.', 'custom-portfolio-ordering' ); ?></p>
 
 			<nav class="nav-tab-wrapper">
 				<a href="<?php echo esc_url( admin_url( 'admin.php?page=custom-portfolio-ordering' ) ); ?>" class="nav-tab nav-tab-active"><?php esc_html_e( 'Ordering', 'custom-portfolio-ordering' ); ?></a>
 				<a href="<?php echo esc_url( admin_url( 'admin.php?page=cpo-import' ) ); ?>" class="nav-tab"><?php esc_html_e( 'Import Items', 'custom-portfolio-ordering' ); ?></a>
 			</nav>
 
-			<div class="cpo-controls">
-				<label for="cpo-taxonomy"><?php esc_html_e( 'Taxonomy:', 'custom-portfolio-ordering' ); ?></label>
-				<select id="cpo-taxonomy">
-					<?php foreach ( $taxonomies as $slug => $tax ) : ?>
-						<option value="<?php echo esc_attr( $slug ); ?>"><?php echo esc_html( $tax->labels->name ); ?></option>
-					<?php endforeach; ?>
-				</select>
-
-				<label for="cpo-term"><?php esc_html_e( 'Category:', 'custom-portfolio-ordering' ); ?></label>
-				<select id="cpo-term">
-					<option value=""><?php esc_html_e( '— Select a category —', 'custom-portfolio-ordering' ); ?></option>
-				</select>
-
-				<span id="cpo-loading" class="spinner" style="float:none;"></span>
-
-				<button type="button" id="cpo-preview-grid" class="button cpo-btn-preview" disabled>
-					<span class="dashicons dashicons-screenoptions"></span> <?php esc_html_e( 'Grid Preview', 'custom-portfolio-ordering' ); ?>
+			<div class="cpo-view-toggle">
+				<button type="button" class="cpo-view-btn active" data-view="items">
+					<span class="dashicons dashicons-list-view"></span>
+					<?php esc_html_e( 'Portfolio Items', 'custom-portfolio-ordering' ); ?>
+				</button>
+				<button type="button" class="cpo-view-btn" data-view="grid">
+					<span class="dashicons dashicons-screenoptions"></span>
+					<?php esc_html_e( 'Page Grid Ordering', 'custom-portfolio-ordering' ); ?>
 				</button>
 			</div>
 
-			<div id="cpo-status" class="cpo-status"></div>
+			<?php /* ── Portfolio Items view ── */ ?>
+			<div id="cpo-view-items" class="cpo-view-pane">
+				<div class="cpo-controls">
+					<label for="cpo-taxonomy"><?php esc_html_e( 'Taxonomy:', 'custom-portfolio-ordering' ); ?></label>
+					<select id="cpo-taxonomy">
+						<?php foreach ( $taxonomies as $slug => $tax ) : ?>
+							<option value="<?php echo esc_attr( $slug ); ?>"><?php echo esc_html( $tax->labels->name ); ?></option>
+						<?php endforeach; ?>
+					</select>
 
-			<div id="cpo-list-wrapper">
-				<p class="cpo-placeholder"><?php esc_html_e( 'Select a taxonomy and category above to load items.', 'custom-portfolio-ordering' ); ?></p>
+					<label for="cpo-term"><?php esc_html_e( 'Category:', 'custom-portfolio-ordering' ); ?></label>
+					<select id="cpo-term">
+						<option value=""><?php esc_html_e( '— Select a category —', 'custom-portfolio-ordering' ); ?></option>
+					</select>
+
+					<span id="cpo-loading" class="spinner" style="float:none;"></span>
+
+					<button type="button" id="cpo-preview-grid" class="button cpo-btn-preview" disabled>
+						<span class="dashicons dashicons-screenoptions"></span> <?php esc_html_e( 'Grid Preview', 'custom-portfolio-ordering' ); ?>
+					</button>
+				</div>
+
+				<div id="cpo-status" class="cpo-status"></div>
+
+				<div id="cpo-list-wrapper">
+					<p class="cpo-placeholder"><?php esc_html_e( 'Select a taxonomy and category above to load items.', 'custom-portfolio-ordering' ); ?></p>
+				</div>
+			</div>
+
+			<?php /* ── Page Grid Ordering view ── */ ?>
+			<div id="cpo-view-grid" class="cpo-view-pane" style="display:none;">
+				<p class="cpo-view-desc"><?php esc_html_e( 'Select a parent category to reorder the sub-category image boxes on its page. Saving rewrites the page content to match the new order.', 'custom-portfolio-ordering' ); ?></p>
+
+				<div class="cpo-controls">
+					<label for="cpo-grid-taxonomy"><?php esc_html_e( 'Taxonomy:', 'custom-portfolio-ordering' ); ?></label>
+					<select id="cpo-grid-taxonomy">
+						<?php foreach ( $taxonomies as $slug => $tax ) : ?>
+							<option value="<?php echo esc_attr( $slug ); ?>"><?php echo esc_html( $tax->labels->name ); ?></option>
+						<?php endforeach; ?>
+					</select>
+
+					<label for="cpo-grid-parent-term"><?php esc_html_e( 'Parent Category:', 'custom-portfolio-ordering' ); ?></label>
+					<select id="cpo-grid-parent-term">
+						<option value=""><?php esc_html_e( '— Select a parent category —', 'custom-portfolio-ordering' ); ?></option>
+					</select>
+
+					<span id="cpo-grid-loading" class="spinner" style="float:none;"></span>
+				</div>
+
+				<div id="cpo-grid-status" class="cpo-status"></div>
+
+				<div id="cpo-grid-list-wrapper">
+					<p class="cpo-placeholder"><?php esc_html_e( 'Select a parent category above to load its sub-category grid order.', 'custom-portfolio-ordering' ); ?></p>
+				</div>
 			</div>
 		</div>
 
@@ -558,6 +601,206 @@ class CPO_Admin {
 				/* translators: %d: number of items reordered */
 				__( 'Order saved for %d items.', 'custom-portfolio-ordering' ),
 				count( $order )
+			),
+		) );
+	}
+
+	/**
+	 * AJAX: Return sub-categories for a parent term, ordered to match the current page grid.
+	 */
+	public function ajax_get_sub_cats() {
+		check_ajax_referer( 'cpo_sort_nonce', 'nonce' );
+
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			wp_send_json_error( 'Unauthorized' );
+		}
+
+		$taxonomy  = sanitize_text_field( wp_unslash( $_POST['taxonomy'] ?? '' ) );
+		$parent_id = absint( $_POST['term_id'] ?? 0 );
+
+		if ( empty( $taxonomy ) || empty( $parent_id ) ) {
+			wp_send_json_error( 'Missing parameters' );
+		}
+
+		$parent_term = get_term( $parent_id, $taxonomy );
+		if ( is_wp_error( $parent_term ) || ! $parent_term ) {
+			wp_send_json_error( 'Invalid term' );
+		}
+
+		$sub_terms = get_terms( array(
+			'taxonomy'   => $taxonomy,
+			'parent'     => $parent_id,
+			'hide_empty' => false,
+			'orderby'    => 'name',
+			'order'      => 'ASC',
+		) );
+
+		if ( is_wp_error( $sub_terms ) ) {
+			wp_send_json_error( 'Could not load sub-categories' );
+		}
+
+		// Find the parent page by slug.
+		$parent_pages = get_posts( array(
+			'post_type'      => 'page',
+			'post_status'    => 'publish',
+			'posts_per_page' => 1,
+			'name'           => $parent_term->slug,
+			'post_parent'    => 0,
+		) );
+
+		$page_id       = 0;
+		$ordered_slugs = array();
+
+		if ( ! empty( $parent_pages ) ) {
+			$page_id = $parent_pages[0]->ID;
+			$content = $parent_pages[0]->post_content;
+
+			// Extract sub-category order from the grid row link attributes.
+			if ( preg_match( '/\[row width="full-width"\](.*?)\[\/row\]/s', $content, $row_match ) ) {
+				preg_match_all( '/link="[^"]*\/([^"\/]+)"/', $row_match[1], $link_matches );
+				$ordered_slugs = $link_matches[1] ?? array();
+			}
+		}
+
+		// Build items with a representative thumbnail from each sub-category.
+		$slug_to_item = array();
+		foreach ( $sub_terms as $term ) {
+			$posts = get_posts( array(
+				'post_type'      => self::POST_TYPE,
+				'post_status'    => 'publish',
+				'posts_per_page' => 1,
+				'tax_query'      => array( array(
+					'taxonomy' => $taxonomy,
+					'field'    => 'term_id',
+					'terms'    => $term->term_id,
+				) ),
+			) );
+
+			$thumbnail = '';
+			if ( ! empty( $posts ) ) {
+				$thumbnail = get_the_post_thumbnail_url( $posts[0]->ID, 'medium' ) ?: '';
+			}
+
+			$slug_to_item[ $term->slug ] = array(
+				'id'        => $term->term_id,
+				'name'      => $term->name,
+				'slug'      => $term->slug,
+				'count'     => $term->count,
+				'thumbnail' => $thumbnail,
+			);
+		}
+
+		// Sort by current page grid order; unmatched sub-cats go at the end.
+		$items = array();
+		foreach ( $ordered_slugs as $slug ) {
+			if ( isset( $slug_to_item[ $slug ] ) ) {
+				$items[] = $slug_to_item[ $slug ];
+				unset( $slug_to_item[ $slug ] );
+			}
+		}
+		$items = array_merge( $items, array_values( $slug_to_item ) );
+
+		wp_send_json_success( array(
+			'items'    => $items,
+			'term_id'  => $parent_id,
+			'taxonomy' => $taxonomy,
+			'page_id'  => $page_id,
+			'has_page' => $page_id > 0,
+		) );
+	}
+
+	/**
+	 * AJAX: Reorder the [col] blocks inside [row width="full-width"] on the parent page.
+	 */
+	public function ajax_save_grid_order() {
+		check_ajax_referer( 'cpo_sort_nonce', 'nonce' );
+
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			wp_send_json_error( 'Unauthorized' );
+		}
+
+		$taxonomy  = sanitize_text_field( wp_unslash( $_POST['taxonomy'] ?? '' ) );
+		$parent_id = absint( $_POST['term_id'] ?? 0 );
+		$order     = isset( $_POST['order'] ) ? array_map( 'absint', $_POST['order'] ) : array();
+
+		if ( empty( $taxonomy ) || empty( $parent_id ) || empty( $order ) ) {
+			wp_send_json_error( 'Missing parameters' );
+		}
+
+		$parent_term = get_term( $parent_id, $taxonomy );
+		if ( is_wp_error( $parent_term ) || ! $parent_term ) {
+			wp_send_json_error( 'Invalid term' );
+		}
+
+		$parent_pages = get_posts( array(
+			'post_type'      => 'page',
+			'post_status'    => 'publish',
+			'posts_per_page' => 1,
+			'name'           => $parent_term->slug,
+			'post_parent'    => 0,
+		) );
+
+		if ( empty( $parent_pages ) ) {
+			wp_send_json_error( array( 'message' => 'Parent page not found. Create the page first, then set the grid order here.' ) );
+		}
+
+		$page    = $parent_pages[0];
+		$content = $page->post_content;
+
+		if ( ! preg_match( '/(\[row width="full-width"\])(.*?)(\[\/row\])/s', $content, $row_match ) ) {
+			wp_send_json_error( array( 'message' => 'Grid row not found in the page content.' ) );
+		}
+
+		// Extract individual [col]...[/col] blocks from inside the grid row.
+		preg_match_all( '/\[col[^\]]*\].*?\[\/col\]/s', $row_match[2], $col_matches );
+		$cols = $col_matches[0] ?? array();
+
+		// Map each col to its sub-term slug via the link attribute.
+		$slug_to_col = array();
+		$unmatched   = array();
+		foreach ( $cols as $col ) {
+			if ( preg_match( '/link="[^"]*\/([^"\/]+)"/', $col, $lm ) ) {
+				$slug_to_col[ $lm[1] ] = $col;
+			} else {
+				$unmatched[] = $col;
+			}
+		}
+
+		// Reorder cols by the submitted term ID sequence.
+		$new_cols = array();
+		foreach ( $order as $term_id ) {
+			$term = get_term( $term_id, $taxonomy );
+			if ( $term && ! is_wp_error( $term ) && isset( $slug_to_col[ $term->slug ] ) ) {
+				$new_cols[] = $slug_to_col[ $term->slug ];
+				unset( $slug_to_col[ $term->slug ] );
+			}
+		}
+
+		// Append anything not covered by the submitted order.
+		$new_cols = array_merge( $new_cols, array_values( $slug_to_col ), $unmatched );
+
+		$new_row     = $row_match[1] . implode( '', $new_cols ) . $row_match[3];
+		$new_content = str_replace( $row_match[0], $new_row, $content );
+
+		if ( $new_content === $content ) {
+			wp_send_json_success( array( 'message' => __( 'No changes needed.', 'custom-portfolio-ordering' ) ) );
+			return;
+		}
+
+		$result = wp_update_post( array(
+			'ID'           => $page->ID,
+			'post_content' => $new_content,
+		) );
+
+		if ( is_wp_error( $result ) ) {
+			wp_send_json_error( array( 'message' => 'Failed to update the page.' ) );
+		}
+
+		wp_send_json_success( array(
+			'message' => sprintf(
+				/* translators: %d: number of categories reordered */
+				__( 'Grid order saved for %d categories.', 'custom-portfolio-ordering' ),
+				count( $new_cols )
 			),
 		) );
 	}
