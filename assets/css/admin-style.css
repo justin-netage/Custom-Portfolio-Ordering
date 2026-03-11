@@ -693,6 +693,39 @@ body.cpo-modal-open {
 	color: #c00;
 }
 
+/* Edit-image button — grid modal, sub-category mode */
+.cpo-grid-edit-img-btn {
+	position: absolute;
+	top: 6px;
+	left: 6px;
+	background: rgba(255, 255, 255, 0.9);
+	border: 1px solid #b2d4f5;
+	color: #0073aa;
+	cursor: pointer;
+	padding: 4px;
+	border-radius: 3px;
+	line-height: 1;
+	opacity: 0;
+	transition: opacity 0.15s ease, background 0.1s ease;
+	z-index: 10;
+}
+
+.cpo-grid-item:hover .cpo-grid-edit-img-btn {
+	opacity: 1;
+}
+
+.cpo-grid-edit-img-btn:hover {
+	background: #d0e8f9;
+	color: #005a87;
+}
+
+.cpo-grid-edit-img-btn .dashicons {
+	font-size: 16px;
+	width: 16px;
+	height: 16px;
+	display: block;
+}
+
 /* Delete button — grid view */
 .cpo-grid-delete-btn {
 	position: absolute;

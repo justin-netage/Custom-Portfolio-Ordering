@@ -398,6 +398,8 @@
 			html += '<div class="cpo-grid-img-wrap">' + thumb;
 			if (!isSubCatMode) {
 				html += '<button type="button" class="cpo-grid-delete-btn" data-id="' + item.id + '" title="Move to trash"><span class="dashicons dashicons-trash"></span></button>';
+			} else {
+				html += '<button type="button" class="cpo-grid-edit-img-btn" data-term-id="' + item.id + '" data-img-id="' + (item.img_id || 0) + '" title="Change image"><span class="dashicons dashicons-edit"></span></button>';
 			}
 			html += '</div>';
 			html += '<div class="cpo-grid-meta">';
@@ -617,12 +619,13 @@
 				taxonomy: currentTax,
 				term_id:  currentTerm,
 				order:    order,
-				images:   {}
+				images:   gridImageChanges
 			}, function (response) {
 				$btn.prop('disabled', false);
 				$spin.removeClass('is-active');
 
 				if (response.success) {
+					gridImageChanges = {};
 					syncSubCatListToGridOrder(order);
 					showStatus(response.data.message, 'success');
 					closePreviewModal();
@@ -762,6 +765,67 @@
 		var postId = parseInt($(this).data('id'), 10);
 		var $item  = $(this).closest('.cpo-grid-item');
 		deleteItem(postId, $item);
+	});
+
+	// Grid-view image edit — sub-category mode (delegated — modal is created dynamically).
+	$('body').on('click', '.cpo-grid-edit-img-btn', function (e) {
+		e.stopPropagation();
+
+		var $btn      = $(this);
+		var termId    = parseInt($btn.data('term-id'), 10);
+		var currentId = parseInt($btn.data('img-id'), 10) || 0;
+
+		function openModalMediaFrame(attachmentIds) {
+			var libraryQuery = { type: 'image' };
+			if (attachmentIds && attachmentIds.length > 0) {
+				libraryQuery.post__in = attachmentIds;
+			}
+
+			var frame = wp.media({
+				title:    'Select Image',
+				button:   { text: 'Use this image' },
+				multiple: false,
+				library:  libraryQuery
+			});
+
+			if (currentId) {
+				frame.on('open', function () {
+					var selection  = frame.state().get('selection');
+					var attachment = wp.media.attachment(currentId);
+					attachment.fetch();
+					selection.add(attachment ? [attachment] : []);
+				});
+			}
+
+			frame.on('select', function () {
+				var attachment = frame.state().get('selection').first().toJSON();
+				var url        = (attachment.sizes && attachment.sizes.medium)
+					? attachment.sizes.medium.url
+					: attachment.url;
+
+				gridImageChanges[termId] = attachment.id;
+				$btn.data('img-id', attachment.id);
+
+				var $imgWrap = $btn.closest('.cpo-grid-img-wrap');
+				$imgWrap.find('img, .cpo-grid-no-thumb').remove();
+				$imgWrap.prepend('<img src="' + url + '" alt="" />');
+			});
+
+			frame.open();
+		}
+
+		$.post(cpoData.ajaxUrl, {
+			action:           'cpo_get_term_images',
+			nonce:            cpoData.nonce,
+			taxonomy:         currentTax,
+			term_id:          termId,
+			include_children: 0
+		}, function (response) {
+			var ids = (response.success && response.data.ids.length > 0) ? response.data.ids : null;
+			openModalMediaFrame(ids);
+		}).fail(function () {
+			openModalMediaFrame(null);
+		});
 	});
 
 	$taxonomy.on('change', function () {
