@@ -325,78 +325,37 @@ class CPO_Admin {
 		?>
 		<div class="wrap cpo-wrap">
 			<h1><?php esc_html_e( 'Portfolio Ordering', 'custom-portfolio-ordering' ); ?></h1>
-			<p class="description"><?php esc_html_e( 'Use Portfolio Items to set the order of individual items within a category. Use Page Grid Ordering to set the order of sub-category boxes on a parent category page.', 'custom-portfolio-ordering' ); ?></p>
+			<p class="description"><?php esc_html_e( 'Select a category to set its display order. Selecting a parent category reorders the sub-category image boxes on its page; selecting a sub-category reorders the individual portfolio items within it.', 'custom-portfolio-ordering' ); ?></p>
 
 			<nav class="nav-tab-wrapper">
 				<a href="<?php echo esc_url( admin_url( 'admin.php?page=custom-portfolio-ordering' ) ); ?>" class="nav-tab nav-tab-active"><?php esc_html_e( 'Ordering', 'custom-portfolio-ordering' ); ?></a>
 				<a href="<?php echo esc_url( admin_url( 'admin.php?page=cpo-import' ) ); ?>" class="nav-tab"><?php esc_html_e( 'Import Items', 'custom-portfolio-ordering' ); ?></a>
 			</nav>
 
-			<div class="cpo-view-toggle">
-				<button type="button" class="cpo-view-btn active" data-view="items">
-					<span class="dashicons dashicons-list-view"></span>
-					<?php esc_html_e( 'Portfolio Items', 'custom-portfolio-ordering' ); ?>
-				</button>
-				<button type="button" class="cpo-view-btn" data-view="grid">
-					<span class="dashicons dashicons-screenoptions"></span>
-					<?php esc_html_e( 'Page Grid Ordering', 'custom-portfolio-ordering' ); ?>
+			<div class="cpo-controls">
+				<label for="cpo-taxonomy"><?php esc_html_e( 'Taxonomy:', 'custom-portfolio-ordering' ); ?></label>
+				<select id="cpo-taxonomy">
+					<?php foreach ( $taxonomies as $slug => $tax ) : ?>
+						<option value="<?php echo esc_attr( $slug ); ?>"><?php echo esc_html( $tax->labels->name ); ?></option>
+					<?php endforeach; ?>
+				</select>
+
+				<label for="cpo-term"><?php esc_html_e( 'Category:', 'custom-portfolio-ordering' ); ?></label>
+				<select id="cpo-term">
+					<option value=""><?php esc_html_e( '— Select a category —', 'custom-portfolio-ordering' ); ?></option>
+				</select>
+
+				<span id="cpo-loading" class="spinner" style="float:none;"></span>
+
+				<button type="button" id="cpo-preview-grid" class="button cpo-btn-preview" disabled>
+					<span class="dashicons dashicons-screenoptions"></span> <?php esc_html_e( 'Grid Preview', 'custom-portfolio-ordering' ); ?>
 				</button>
 			</div>
 
-			<?php /* ── Portfolio Items view ── */ ?>
-			<div id="cpo-view-items" class="cpo-view-pane">
-				<div class="cpo-controls">
-					<label for="cpo-taxonomy"><?php esc_html_e( 'Taxonomy:', 'custom-portfolio-ordering' ); ?></label>
-					<select id="cpo-taxonomy">
-						<?php foreach ( $taxonomies as $slug => $tax ) : ?>
-							<option value="<?php echo esc_attr( $slug ); ?>"><?php echo esc_html( $tax->labels->name ); ?></option>
-						<?php endforeach; ?>
-					</select>
+			<div id="cpo-status" class="cpo-status"></div>
 
-					<label for="cpo-term"><?php esc_html_e( 'Category:', 'custom-portfolio-ordering' ); ?></label>
-					<select id="cpo-term">
-						<option value=""><?php esc_html_e( '— Select a category —', 'custom-portfolio-ordering' ); ?></option>
-					</select>
-
-					<span id="cpo-loading" class="spinner" style="float:none;"></span>
-
-					<button type="button" id="cpo-preview-grid" class="button cpo-btn-preview" disabled>
-						<span class="dashicons dashicons-screenoptions"></span> <?php esc_html_e( 'Grid Preview', 'custom-portfolio-ordering' ); ?>
-					</button>
-				</div>
-
-				<div id="cpo-status" class="cpo-status"></div>
-
-				<div id="cpo-list-wrapper">
-					<p class="cpo-placeholder"><?php esc_html_e( 'Select a taxonomy and category above to load items.', 'custom-portfolio-ordering' ); ?></p>
-				</div>
-			</div>
-
-			<?php /* ── Page Grid Ordering view ── */ ?>
-			<div id="cpo-view-grid" class="cpo-view-pane" style="display:none;">
-				<p class="cpo-view-desc"><?php esc_html_e( 'Select a parent category to reorder the sub-category image boxes on its page. Saving rewrites the page content to match the new order.', 'custom-portfolio-ordering' ); ?></p>
-
-				<div class="cpo-controls">
-					<label for="cpo-grid-taxonomy"><?php esc_html_e( 'Taxonomy:', 'custom-portfolio-ordering' ); ?></label>
-					<select id="cpo-grid-taxonomy">
-						<?php foreach ( $taxonomies as $slug => $tax ) : ?>
-							<option value="<?php echo esc_attr( $slug ); ?>"><?php echo esc_html( $tax->labels->name ); ?></option>
-						<?php endforeach; ?>
-					</select>
-
-					<label for="cpo-grid-parent-term"><?php esc_html_e( 'Parent Category:', 'custom-portfolio-ordering' ); ?></label>
-					<select id="cpo-grid-parent-term">
-						<option value=""><?php esc_html_e( '— Select a parent category —', 'custom-portfolio-ordering' ); ?></option>
-					</select>
-
-					<span id="cpo-grid-loading" class="spinner" style="float:none;"></span>
-				</div>
-
-				<div id="cpo-grid-status" class="cpo-status"></div>
-
-				<div id="cpo-grid-list-wrapper">
-					<p class="cpo-placeholder"><?php esc_html_e( 'Select a parent category above to load its sub-category grid order.', 'custom-portfolio-ordering' ); ?></p>
-				</div>
+			<div id="cpo-list-wrapper">
+				<p class="cpo-placeholder"><?php esc_html_e( 'Select a taxonomy and category above to load items.', 'custom-portfolio-ordering' ); ?></p>
 			</div>
 		</div>
 
