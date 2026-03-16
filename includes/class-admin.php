@@ -889,33 +889,65 @@ class CPO_Admin {
 			}
 		}
 
+		// Build a col template from the first existing col so new cols match the page style.
+		$col_template = '';
+		if ( ! empty( $cols ) ) {
+			$first_col = $cols[0];
+			// Extract the [col ...] opening tag attributes.
+			if ( preg_match( '/\[col([^\]]*)\]/', $first_col, $ct ) ) {
+				$col_attrs = $ct[1];
+			} else {
+				$col_attrs = '';
+			}
+			// Extract the [ux_image_box ...] attributes (minus img and link which we set per-item).
+			$ib_attrs = '';
+			if ( preg_match( '/\[ux_image_box([^\]]*)\]/', $first_col, $ib ) ) {
+				// Remove img="..." and link="..." so we can set our own.
+				$ib_attrs = preg_replace( '/\s*\bimg="[^"]*"/', '', $ib[1] );
+				$ib_attrs = preg_replace( '/\s*\blink="[^"]*"/', '', $ib_attrs );
+			}
+			$col_template = '[col' . $col_attrs . '][ux_image_box' . $ib_attrs . ' img="%IMG%" link="%LINK%"]%NAME%[/ux_image_box][/col]';
+		}
+
 		// Reorder cols, update link URLs to current slugs, and apply image changes.
 		$new_cols = array();
 		foreach ( $order as $term_id ) {
 			$term = get_term( $term_id, $taxonomy );
-			if ( ! $term || is_wp_error( $term ) || ! isset( $termid_to_col[ $term_id ] ) ) {
+			if ( ! $term || is_wp_error( $term ) ) {
 				continue;
 			}
 
-			$col = $termid_to_col[ $term_id ];
+			$new_link = '/' . $parent_term->slug . '/' . $term->slug;
 
-			// Update the link to use current parent/term slugs.
-			$col = preg_replace(
-				'/link="[^"]*"/',
-				'link="/' . $parent_term->slug . '/' . $term->slug . '"',
-				$col
-			);
+			if ( isset( $termid_to_col[ $term_id ] ) ) {
+				$col = $termid_to_col[ $term_id ];
 
-			// Apply image changes.
-			if ( ! empty( $images[ $term_id ] ) ) {
-				$new_img = $images[ $term_id ];
-				if ( preg_match( '/\[ux_image_box[^\]]*\bimg="/', $col ) ) {
-					// Replace existing img attribute value.
-					$col = preg_replace( '/(\[ux_image_box[^\]]*\bimg=")[^"]*(")/s', '${1}' . $new_img . '${2}', $col );
-				} else {
-					// No img attribute exists — add one to the shortcode tag.
-					$col = preg_replace( '/(\[ux_image_box)([^\]]*\])/', '${1} img="' . $new_img . '"${2}', $col );
+				// Update the link to use current parent/term slugs.
+				$col = preg_replace(
+					'/link="[^"]*"/',
+					'link="' . $new_link . '"',
+					$col
+				);
+
+				// Apply image changes.
+				if ( ! empty( $images[ $term_id ] ) ) {
+					$new_img = $images[ $term_id ];
+					if ( preg_match( '/\[ux_image_box[^\]]*\bimg="/', $col ) ) {
+						$col = preg_replace( '/(\[ux_image_box[^\]]*\bimg=")[^"]*(")/s', '${1}' . $new_img . '${2}', $col );
+					} else {
+						$col = preg_replace( '/(\[ux_image_box)([^\]]*\])/', '${1} img="' . $new_img . '"${2}', $col );
+					}
 				}
+			} elseif ( $col_template ) {
+				// No existing col for this term — create one from the template.
+				$img_id = ! empty( $images[ $term_id ] ) ? $images[ $term_id ] : '';
+				$col    = str_replace(
+					array( '%IMG%', '%LINK%', '%NAME%' ),
+					array( $img_id, $new_link, $term->name ),
+					$col_template
+				);
+			} else {
+				continue;
 			}
 
 			$new_cols[] = $col;
