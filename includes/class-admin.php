@@ -421,11 +421,13 @@ class CPO_Admin {
 						$spinner.removeClass('is-active');
 
 						if (response.success) {
-							var msg = response.data.message;
+							var html = '<strong>' + response.data.message + '</strong>';
 							if (response.data.details && response.data.details.length) {
-								msg += ' (' + response.data.details.join(', ') + ')';
+								html += '<ul style="margin:4px 0 0 16px;list-style:disc;">';
+								response.data.details.forEach(function(d){ html += '<li>' + d + '</li>'; });
+								html += '</ul>';
 							}
-							$result.css('color', '#00a32a').text(msg);
+							$result.css('color', '#00a32a').html(html);
 						} else {
 							$result.css('color', '#d63638').text(response.data.message || 'Fix failed.');
 						}
@@ -959,8 +961,9 @@ class CPO_Admin {
 	}
 
 	/**
-	 * AJAX: Scan all parent-category pages and update stale link URLs in [col] blocks
-	 * to match the current term slugs. This is a one-click migration for renamed terms.
+	 * AJAX: Scan ALL published pages for stale link= attributes and update them
+	 * to match current term slugs. Uses word-similarity matching to identify
+	 * renamed slugs (e.g. the-biltmore → the-arizona-biltmore).
 	 */
 	public function ajax_fix_links() {
 		check_ajax_referer( 'cpo_sort_nonce', 'nonce' );
@@ -970,144 +973,190 @@ class CPO_Admin {
 		}
 
 		$taxonomies = $this->get_taxonomies();
-		$fixed      = 0;
-		$skipped    = 0;
-		$details    = array();
+
+		// Build term structures.
+		$parent_terms = array(); // term_id → term object (top-level only).
+		$child_terms  = array(); // parent_id → array of child term objects.
 
 		foreach ( $taxonomies as $tax_slug => $tax_obj ) {
-			// Get all top-level (parent) terms.
-			$parent_terms = get_terms( array(
-				'taxonomy'   => $tax_slug,
-				'parent'     => 0,
-				'hide_empty' => false,
-			) );
-
-			if ( is_wp_error( $parent_terms ) || empty( $parent_terms ) ) {
+			$terms = get_terms( array( 'taxonomy' => $tax_slug, 'hide_empty' => false ) );
+			if ( is_wp_error( $terms ) ) {
 				continue;
 			}
-
-			foreach ( $parent_terms as $parent_term ) {
-				// Find the matching page by slug.
-				$pages = get_posts( array(
-					'post_type'      => 'page',
-					'post_status'    => 'publish',
-					'posts_per_page' => 1,
-					'name'           => $parent_term->slug,
-					'post_parent'    => 0,
-				) );
-
-				if ( empty( $pages ) ) {
-					continue;
-				}
-
-				$page    = $pages[0];
-				$content = $page->post_content;
-
-				if ( ! preg_match( '/(\[row width="full-width"\])(.*?)(\[\/row\])/s', $content, $row_match ) ) {
-					continue;
-				}
-
-				// Get sub-terms for this parent.
-				$sub_terms = get_terms( array(
-					'taxonomy'   => $tax_slug,
-					'parent'     => $parent_term->term_id,
-					'hide_empty' => false,
-				) );
-
-				if ( is_wp_error( $sub_terms ) || empty( $sub_terms ) ) {
-					continue;
-				}
-
-				// Build a slug lookup for current sub-terms.
-				$current_slugs = array();
-				foreach ( $sub_terms as $st ) {
-					$current_slugs[ $st->slug ] = $st;
-				}
-
-				// Extract [col] blocks and their link slugs.
-				preg_match_all( '/\[col[^\]]*\].*?\[\/col\]/s', $row_match[2], $col_matches );
-				$cols = $col_matches[0] ?? array();
-
-				if ( empty( $cols ) ) {
-					continue;
-				}
-
-				// Match cols to sub-terms: exact slug first, then positional fallback.
-				$col_data = array();
-				foreach ( $cols as $col ) {
-					$link_slug = '';
-					if ( preg_match( '/link="[^"]*\/([^"\/]+)"/', $col, $lm ) ) {
-						$link_slug = $lm[1];
+			foreach ( $terms as $t ) {
+				if ( $t->parent === 0 ) {
+					$parent_terms[ $t->term_id ] = $t;
+					if ( ! isset( $child_terms[ $t->term_id ] ) ) {
+						$child_terms[ $t->term_id ] = array();
 					}
-					$col_data[] = array( 'markup' => $col, 'slug' => $link_slug );
-				}
-
-				$matched     = array(); // col_index → term object
-				$claimed_idx = array();
-
-				// First pass: exact slug match.
-				foreach ( $col_data as $i => $cd ) {
-					if ( $cd['slug'] && isset( $current_slugs[ $cd['slug'] ] ) ) {
-						$matched[ $i ] = $current_slugs[ $cd['slug'] ];
-						$claimed_idx[] = $i;
-						unset( $current_slugs[ $cd['slug'] ] );
-					}
-				}
-
-				// Second pass: pair unmatched cols with remaining sub-terms in order.
-				$remaining_terms = array_values( $current_slugs );
-				$rt_idx          = 0;
-				foreach ( $col_data as $i => $cd ) {
-					if ( ! isset( $matched[ $i ] ) && $rt_idx < count( $remaining_terms ) ) {
-						$matched[ $i ] = $remaining_terms[ $rt_idx ];
-						$rt_idx++;
-					}
-				}
-
-				// Rebuild cols with updated links.
-				$changed  = false;
-				$new_cols = array();
-				foreach ( $col_data as $i => $cd ) {
-					$col = $cd['markup'];
-					if ( isset( $matched[ $i ] ) ) {
-						$term     = $matched[ $i ];
-						$new_link = '/' . $parent_term->slug . '/' . $term->slug;
-						$updated  = preg_replace( '/link="[^"]*"/', 'link="' . $new_link . '"', $col );
-						if ( $updated !== $col ) {
-							$changed = true;
-							$details[] = $parent_term->name . ': ' . $cd['slug'] . ' → ' . $term->slug;
-						}
-						$new_cols[] = $updated;
-					} else {
-						$new_cols[] = $col;
-					}
-				}
-
-				if ( ! $changed ) {
-					$skipped++;
-					continue;
-				}
-
-				$new_row     = $row_match[1] . implode( '', $new_cols ) . $row_match[3];
-				$new_content = str_replace( $row_match[0], $new_row, $content );
-
-				$result = wp_update_post( array(
-					'ID'           => $page->ID,
-					'post_content' => $new_content,
-				) );
-
-				if ( ! is_wp_error( $result ) ) {
-					$fixed++;
+				} else {
+					$child_terms[ $t->parent ][] = $t;
 				}
 			}
 		}
 
+		// Query ALL published pages that contain link= in their content.
+		global $wpdb;
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$pages = $wpdb->get_results(
+			"SELECT ID, post_content FROM {$wpdb->posts}
+			 WHERE post_type = 'page' AND post_status = 'publish'
+			 AND post_content LIKE '%link=%'"
+		);
+
+		$fixed   = 0;
+		$details = array();
+
+		foreach ( $pages as $page ) {
+			$content     = $page->post_content;
+			$new_content = $content;
+
+			// Find all link="..." attributes.
+			if ( ! preg_match_all( '/link="([^"]+)"/', $content, $matches, PREG_SET_ORDER ) ) {
+				continue;
+			}
+
+			$already_replaced = array(); // Avoid replacing the same link string twice.
+
+			foreach ( $matches as $m ) {
+				$link_url = $m[1];
+
+				if ( isset( $already_replaced[ $link_url ] ) ) {
+					continue;
+				}
+
+				// Parse path segments from the URL.
+				$path = wp_parse_url( $link_url, PHP_URL_PATH );
+				if ( ! $path ) {
+					continue;
+				}
+
+				$segments = array_values( array_filter( explode( '/', trim( $path, '/' ) ) ) );
+				if ( count( $segments ) < 2 ) {
+					continue; // Need at least parent/child.
+				}
+
+				$child_slug  = end( $segments );
+				$parent_slug = $segments[ count( $segments ) - 2 ];
+
+				// Try to match this link to a parent term + child term.
+				$matched_parent = null;
+				$matched_child  = null;
+
+				foreach ( $parent_terms as $pid => $pt ) {
+					$children = $child_terms[ $pid ] ?? array();
+					if ( empty( $children ) ) {
+						continue;
+					}
+
+					// Check if the parent path segment relates to this parent term.
+					$parent_relates = (
+						$parent_slug === $pt->slug
+						|| strpos( $pt->slug, $parent_slug ) !== false
+						|| strpos( $parent_slug, $pt->slug ) !== false
+					);
+
+					if ( ! $parent_relates ) {
+						continue;
+					}
+
+					// Exact child slug match — only needs parent path update.
+					foreach ( $children as $ct ) {
+						if ( $ct->slug === $child_slug ) {
+							$matched_parent = $pt;
+							$matched_child  = $ct;
+							break 2;
+						}
+					}
+
+					// Word-similarity match for renamed child slugs.
+					$best = $this->find_best_slug_match( $child_slug, $children );
+					if ( $best ) {
+						$matched_parent = $pt;
+						$matched_child  = $best;
+						break;
+					}
+				}
+
+				if ( ! $matched_parent || ! $matched_child ) {
+					continue;
+				}
+
+				$new_url = '/' . $matched_parent->slug . '/' . $matched_child->slug;
+				if ( $link_url === $new_url ) {
+					continue;
+				}
+
+				$new_content = str_replace(
+					'link="' . $link_url . '"',
+					'link="' . $new_url . '"',
+					$new_content
+				);
+
+				$already_replaced[ $link_url ] = true;
+				$details[] = $link_url . ' &rarr; ' . $new_url;
+			}
+
+			if ( $new_content !== $content ) {
+				wp_update_post( array(
+					'ID'           => $page->ID,
+					'post_content' => $new_content,
+				) );
+				$fixed++;
+			}
+		}
+
+		if ( $fixed > 0 ) {
+			$message = sprintf( '%d page(s) updated with %d link(s) fixed.', $fixed, count( $details ) );
+		} else {
+			$message = 'No stale links found — all links are already up to date.';
+		}
+
 		wp_send_json_success( array(
-			'message' => sprintf( '%d page(s) updated, %d already correct.', $fixed, $skipped ),
+			'message' => $message,
 			'fixed'   => $fixed,
-			'skipped' => $skipped,
 			'details' => $details,
 		) );
+	}
+
+	/**
+	 * Match a stale slug to the best current term by shared significant words.
+	 *
+	 * Words shorter than 3 characters are ignored to avoid false matches on
+	 * common fragments like "the", "of", "ho", etc.
+	 *
+	 * @param string    $stale_slug The old slug extracted from the link.
+	 * @param WP_Term[] $terms      Array of candidate terms to match against.
+	 * @return WP_Term|null The best matching term, or null if no match.
+	 */
+	private function find_best_slug_match( $stale_slug, $terms ) {
+		$stale_words = array_filter(
+			explode( '-', $stale_slug ),
+			function ( $w ) { return strlen( $w ) >= 3; }
+		);
+
+		if ( empty( $stale_words ) ) {
+			return null;
+		}
+
+		$best       = null;
+		$best_score = 0;
+
+		foreach ( $terms as $term ) {
+			$term_words = array_filter(
+				explode( '-', $term->slug ),
+				function ( $w ) { return strlen( $w ) >= 3; }
+			);
+
+			$common = array_intersect( $stale_words, $term_words );
+
+			if ( count( $common ) > $best_score ) {
+				$best_score = count( $common );
+				$best       = $term;
+			}
+		}
+
+		return $best;
 	}
 
 	/**
