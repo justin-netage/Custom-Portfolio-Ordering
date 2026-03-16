@@ -677,15 +677,37 @@ class CPO_Admin {
 			);
 		}
 
-		// Sort by current page grid order; unmatched sub-cats go at the end.
-		$items = array();
+		// Sort by current page grid order; handle stale slugs from renamed terms.
+		$items          = array();
+		$remaining_pool = $slug_to_item;
+
 		foreach ( $ordered_slugs as $slug ) {
-			if ( isset( $slug_to_item[ $slug ] ) ) {
-				$items[] = $slug_to_item[ $slug ];
-				unset( $slug_to_item[ $slug ] );
+			if ( isset( $remaining_pool[ $slug ] ) ) {
+				// Exact slug match.
+				$items[] = $remaining_pool[ $slug ];
+				unset( $remaining_pool[ $slug ] );
+			} elseif ( ! empty( $remaining_pool ) ) {
+				// Stale slug — pair with the next unmatched sub-term.
+				$key  = array_key_first( $remaining_pool );
+				$item = $remaining_pool[ $key ];
+				unset( $remaining_pool[ $key ] );
+
+				// Carry over the page image for this col position.
+				if ( ! empty( $slug_to_img_id[ $slug ] ) ) {
+					$img_id         = $slug_to_img_id[ $slug ];
+					$item['img_id'] = $img_id;
+					$src            = wp_get_attachment_image_src( $img_id, 'medium' );
+					if ( $src ) {
+						$item['thumbnail'] = $src[0];
+					}
+				}
+
+				$items[] = $item;
 			}
 		}
-		$items = array_merge( $items, array_values( $slug_to_item ) );
+
+		// Append any sub-terms not represented on the page.
+		$items = array_merge( $items, array_values( $remaining_pool ) );
 
 		wp_send_json_success( array(
 			'items'    => $items,
@@ -750,7 +772,7 @@ class CPO_Admin {
 		preg_match_all( '/\[col[^\]]*\].*?\[\/col\]/s', $row_match[2], $col_matches );
 		$cols = $col_matches[0] ?? array();
 
-		// Map each col to its sub-term slug via the link attribute.
+		// Map each col to its link slug.
 		$slug_to_col = array();
 		$unmatched   = array();
 		foreach ( $cols as $col ) {
@@ -761,23 +783,63 @@ class CPO_Admin {
 			}
 		}
 
-		// Reorder cols by the submitted term ID sequence, applying any image changes.
-		$new_cols = array();
+		// Build term_id → col mapping, handling renamed slugs.
+		$termid_to_col = array();
+		$claimed_slugs = array();
+
+		// First pass: exact slug match.
 		foreach ( $order as $term_id ) {
 			$term = get_term( $term_id, $taxonomy );
 			if ( $term && ! is_wp_error( $term ) && isset( $slug_to_col[ $term->slug ] ) ) {
-				$col = $slug_to_col[ $term->slug ];
-				if ( ! empty( $images[ $term_id ] ) ) {
-					$new_img = $images[ $term_id ];
-					$col     = preg_replace( '/(\[ux_image_box[^\]]*\bimg=")[^"]*(")/s', '${1}' . $new_img . '${2}', $col );
-				}
-				$new_cols[] = $col;
-				unset( $slug_to_col[ $term->slug ] );
+				$termid_to_col[ $term_id ] = $slug_to_col[ $term->slug ];
+				$claimed_slugs[]           = $term->slug;
 			}
 		}
 
+		// Second pass: pair unmatched terms with unclaimed cols in page order.
+		$unclaimed_cols = array();
+		foreach ( $slug_to_col as $slug => $col ) {
+			if ( ! in_array( $slug, $claimed_slugs, true ) ) {
+				$unclaimed_cols[] = $col;
+			}
+		}
+		$uc_idx = 0;
+		foreach ( $order as $term_id ) {
+			if ( ! isset( $termid_to_col[ $term_id ] ) && $uc_idx < count( $unclaimed_cols ) ) {
+				$termid_to_col[ $term_id ] = $unclaimed_cols[ $uc_idx ];
+				$uc_idx++;
+			}
+		}
+
+		// Reorder cols, update link URLs to current slugs, and apply image changes.
+		$new_cols = array();
+		foreach ( $order as $term_id ) {
+			$term = get_term( $term_id, $taxonomy );
+			if ( ! $term || is_wp_error( $term ) || ! isset( $termid_to_col[ $term_id ] ) ) {
+				continue;
+			}
+
+			$col = $termid_to_col[ $term_id ];
+
+			// Update the link to use current parent/term slugs.
+			$col = preg_replace(
+				'/link="[^"]*"/',
+				'link="/' . $parent_term->slug . '/' . $term->slug . '"',
+				$col
+			);
+
+			// Apply image changes.
+			if ( ! empty( $images[ $term_id ] ) ) {
+				$new_img = $images[ $term_id ];
+				$col     = preg_replace( '/(\[ux_image_box[^\]]*\bimg=")[^"]*(")/s', '${1}' . $new_img . '${2}', $col );
+			}
+
+			$new_cols[] = $col;
+		}
+
 		// Append anything not covered by the submitted order.
-		$new_cols = array_merge( $new_cols, array_values( $slug_to_col ), $unmatched );
+		$remaining_unclaimed = array_slice( $unclaimed_cols, $uc_idx );
+		$new_cols = array_merge( $new_cols, $remaining_unclaimed, $unmatched );
 
 		$new_row     = $row_match[1] . implode( '', $new_cols ) . $row_match[3];
 		$new_content = str_replace( $row_match[0], $new_row, $content );
