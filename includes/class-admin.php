@@ -696,13 +696,13 @@ class CPO_Admin {
 			$content = $parent_pages[0]->post_content;
 
 			// Extract sub-category order and current img IDs from the grid row.
-			if ( preg_match( '/\[row width="full-width"\](.*?)\[\/row\]/s', $content, $row_match ) ) {
-				preg_match_all( '/link="[^"]*\/([^"\/]+)"/', $row_match[1], $link_matches );
+			if ( preg_match( '/\[row[^\]]*width="full-width"[^\]]*\](.*?)\[\/row\]/s', $content, $row_match ) ) {
+				preg_match_all( '/link="[^"]*\/([^"\/]+)\/?"/', $row_match[1], $link_matches );
 				$ordered_slugs = $link_matches[1] ?? array();
 
 				preg_match_all( '/\[col[^\]]*\].*?\[\/col\]/s', $row_match[1], $col_matches );
 				foreach ( $col_matches[0] ?? array() as $col ) {
-					if ( preg_match( '/link="[^"]*\/([^"\/]+)"/', $col, $lm )
+					if ( preg_match( '/link="[^"]*\/([^"\/]+)\/?"/', $col, $lm )
 						&& preg_match( '/\bimg="(\d+)"/', $col, $im )
 					) {
 						$slug_to_img_id[ $lm[1] ] = (int) $im[1];
@@ -842,7 +842,7 @@ class CPO_Admin {
 		$page    = $parent_pages[0];
 		$content = $page->post_content;
 
-		if ( ! preg_match( '/(\[row width="full-width"\])(.*?)(\[\/row\])/s', $content, $row_match ) ) {
+		if ( ! preg_match( '/(\[row[^\]]*width="full-width"[^\]]*\])(.*?)(\[\/row\])/s', $content, $row_match ) ) {
 			wp_send_json_error( array( 'message' => 'Grid row not found in the page content.' ) );
 		}
 
@@ -854,7 +854,7 @@ class CPO_Admin {
 		$slug_to_col = array();
 		$unmatched   = array();
 		foreach ( $cols as $col ) {
-			if ( preg_match( '/link="[^"]*\/([^"\/]+)"/', $col, $lm ) ) {
+			if ( preg_match( '/link="[^"]*\/([^"\/]+)\/?"/', $col, $lm ) ) {
 				$slug_to_col[ $lm[1] ] = $col;
 			} else {
 				$unmatched[] = $col;
