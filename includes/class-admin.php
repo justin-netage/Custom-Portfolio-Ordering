@@ -910,7 +910,8 @@ class CPO_Admin {
 		}
 
 		// Reorder cols, update link URLs to current slugs, and apply image changes.
-		$new_cols = array();
+		$new_cols       = array();
+		$images_applied = 0;
 		foreach ( $order as $term_id ) {
 			$term = get_term( $term_id, $taxonomy );
 			if ( ! $term || is_wp_error( $term ) ) {
@@ -934,8 +935,10 @@ class CPO_Admin {
 					$new_img = $images[ $term_id ];
 					if ( preg_match( '/\[ux_image_box[^\]]*\bimg="/', $col ) ) {
 						$col = preg_replace( '/(\[ux_image_box[^\]]*\bimg=")[^"]*(")/s', '${1}' . $new_img . '${2}', $col );
+						$images_applied++;
 					} else {
 						$col = preg_replace( '/(\[ux_image_box)([^\]]*\])/', '${1} img="' . $new_img . '"${2}', $col );
+						$images_applied++;
 					}
 				}
 			} elseif ( $col_template ) {
@@ -946,6 +949,9 @@ class CPO_Admin {
 					array( $img_id, $new_link, $term->name ),
 					$col_template
 				);
+				if ( ! empty( $img_id ) ) {
+					$images_applied++;
+				}
 			} else {
 				continue;
 			}
@@ -998,12 +1004,27 @@ class CPO_Admin {
 			\LiteSpeed_Cache_API::purge_post( $page->ID ); // LiteSpeed Cache.
 		}
 
+		$msg = sprintf(
+			/* translators: %d: number of categories reordered */
+			__( 'Grid order saved for %d categories.', 'custom-portfolio-ordering' ),
+			count( $new_cols )
+		);
+
+		if ( count( $images ) > 0 ) {
+			$msg .= ' ' . sprintf(
+				/* translators: %d: number of images updated */
+				__( '%d image(s) updated on the page.', 'custom-portfolio-ordering' ),
+				$images_applied
+			);
+		}
+
 		wp_send_json_success( array(
-			'message' => sprintf(
-				/* translators: %d: number of categories reordered */
-				__( 'Grid order saved for %d categories.', 'custom-portfolio-ordering' ),
-				count( $new_cols )
-			),
+			'message'         => $msg,
+			'images_received' => count( $images ),
+			'images_applied'  => $images_applied,
+			'page_id'         => $page->ID,
+			'cols_found'      => count( $cols ),
+			'cols_matched'    => count( $termid_to_col ),
 		) );
 	}
 

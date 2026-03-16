@@ -624,6 +624,10 @@
 				$btn.prop('disabled', false);
 				$spin.removeClass('is-active');
 
+				if (window.console) {
+					console.log('[CPO] Grid save response:', response.data);
+				}
+
 				if (response.success) {
 					gridImageChanges = {};
 					syncSubCatListToGridOrder(order);
@@ -944,6 +948,10 @@
 		}, function (response) {
 			$btn.prop('disabled', false);
 			$spin.removeClass('is-active');
+
+			if (window.console) {
+				console.log('[CPO] List save response:', response.data);
+			}
 
 			if (response.success) {
 				gridImageChanges = {};
