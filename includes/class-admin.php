@@ -358,15 +358,17 @@ class CPO_Admin {
 			<div id="cpo-status" class="cpo-status"></div>
 
 			<div class="cpo-fix-links-bar" style="margin:12px 0;padding:10px 14px;background:#fff;border:1px solid #c3c4c7;border-left:4px solid #dba617;">
-				<strong><?php esc_html_e( 'Renamed some categories?', 'custom-portfolio-ordering' ); ?></strong>
-				<?php esc_html_e( 'Click below to scan all parent pages and update stale links to match current term slugs.', 'custom-portfolio-ordering' ); ?>
+				<strong><?php esc_html_e( 'Renamed some URLs?', 'custom-portfolio-ordering' ); ?></strong>
+				<?php esc_html_e( 'Enter old and new slugs below (one per line) to find and replace them across all page content.', 'custom-portfolio-ordering' ); ?>
+				<br><br>
+				<textarea id="cpo-fix-links-input" rows="5" cols="60" style="font-family:monospace;font-size:13px;width:100%;max-width:500px;" placeholder="old-slug = new-slug&#10;venue = venues&#10;the-biltmore = the-arizona-biltmore"></textarea>
 				<br><br>
 				<button type="button" id="cpo-fix-links" class="button button-secondary">
 					<span class="dashicons dashicons-admin-links" style="vertical-align:middle;margin-top:-2px;"></span>
-					<?php esc_html_e( 'Fix All Page Links', 'custom-portfolio-ordering' ); ?>
+					<?php esc_html_e( 'Fix Links', 'custom-portfolio-ordering' ); ?>
 				</button>
 				<span id="cpo-fix-links-spinner" class="spinner" style="float:none;vertical-align:middle;"></span>
-				<span id="cpo-fix-links-result" style="margin-left:8px;"></span>
+				<div id="cpo-fix-links-result" style="margin-top:8px;"></div>
 			</div>
 
 			<div id="cpo-list-wrapper">
@@ -408,26 +410,52 @@ class CPO_Admin {
 					var $btn     = $(this);
 					var $spinner = $('#cpo-fix-links-spinner');
 					var $result  = $('#cpo-fix-links-result');
+					var raw      = $('#cpo-fix-links-input').val().trim();
+
+					if (!raw) {
+						$result.css('color', '#d63638').html('Please enter at least one <code>old-slug = new-slug</code> pair.');
+						return;
+					}
+
+					// Parse lines into replacements array.
+					var replacements = [];
+					raw.split('\n').forEach(function(line){
+						line = line.trim();
+						if (!line) return;
+						var parts = line.split('=');
+						if (parts.length >= 2) {
+							replacements.push({
+								old_slug: parts[0].trim().replace(/^\//, ''),
+								new_slug: parts.slice(1).join('=').trim().replace(/^\//, '')
+							});
+						}
+					});
+
+					if (!replacements.length) {
+						$result.css('color', '#d63638').html('No valid pairs found. Use the format: <code>old-slug = new-slug</code>');
+						return;
+					}
 
 					$btn.prop('disabled', true);
 					$spinner.addClass('is-active');
-					$result.text('');
+					$result.html('');
 
 					$.post(<?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>, {
-						action: 'cpo_fix_links',
-						nonce:  <?php echo wp_json_encode( wp_create_nonce( 'cpo_sort_nonce' ) ); ?>
+						action:       'cpo_fix_links',
+						nonce:        <?php echo wp_json_encode( wp_create_nonce( 'cpo_sort_nonce' ) ); ?>,
+						replacements: replacements
 					}, function(response){
 						$btn.prop('disabled', false);
 						$spinner.removeClass('is-active');
 
 						if (response.success) {
-							var html = '<strong>' + response.data.message + '</strong>';
+							var html = '<strong style="color:#00a32a;">' + response.data.message + '</strong>';
 							if (response.data.details && response.data.details.length) {
 								html += '<ul style="margin:4px 0 0 16px;list-style:disc;">';
 								response.data.details.forEach(function(d){ html += '<li>' + d + '</li>'; });
 								html += '</ul>';
 							}
-							$result.css('color', '#00a32a').html(html);
+							$result.html(html);
 						} else {
 							$result.css('color', '#d63638').text(response.data.message || 'Fix failed.');
 						}
@@ -961,9 +989,11 @@ class CPO_Admin {
 	}
 
 	/**
-	 * AJAX: Scan ALL published pages for stale link= attributes and update them
-	 * to match current term slugs. Uses word-similarity matching to identify
-	 * renamed slugs (e.g. the-biltmore → the-arizona-biltmore).
+	 * AJAX: Replace old slugs with new slugs across ALL post/page content.
+	 *
+	 * Accepts an array of { old_slug, new_slug } pairs from the client.
+	 * Replaces every occurrence of /old-slug (as a path segment) with /new-slug
+	 * in any post_content that contains it.
 	 */
 	public function ajax_fix_links() {
 		check_ajax_referer( 'cpo_sort_nonce', 'nonce' );
@@ -972,144 +1002,89 @@ class CPO_Admin {
 			wp_send_json_error( array( 'message' => 'Permission denied.' ) );
 		}
 
-		$taxonomies = $this->get_taxonomies();
+		$raw_replacements = isset( $_POST['replacements'] ) ? $_POST['replacements'] : array();
 
-		// Build term structures.
-		$parent_terms = array(); // term_id → term object (top-level only).
-		$child_terms  = array(); // parent_id → array of child term objects.
+		if ( empty( $raw_replacements ) || ! is_array( $raw_replacements ) ) {
+			wp_send_json_error( array( 'message' => 'No replacements provided.' ) );
+		}
 
-		foreach ( $taxonomies as $tax_slug => $tax_obj ) {
-			$terms = get_terms( array( 'taxonomy' => $tax_slug, 'hide_empty' => false ) );
-			if ( is_wp_error( $terms ) ) {
-				continue;
-			}
-			foreach ( $terms as $t ) {
-				if ( $t->parent === 0 ) {
-					$parent_terms[ $t->term_id ] = $t;
-					if ( ! isset( $child_terms[ $t->term_id ] ) ) {
-						$child_terms[ $t->term_id ] = array();
-					}
-				} else {
-					$child_terms[ $t->parent ][] = $t;
-				}
+		// Sanitize and build the replacement pairs.
+		$pairs = array();
+		foreach ( $raw_replacements as $r ) {
+			$old = isset( $r['old_slug'] ) ? sanitize_title( trim( $r['old_slug'] ) ) : '';
+			$new = isset( $r['new_slug'] ) ? sanitize_title( trim( $r['new_slug'] ) ) : '';
+			if ( $old !== '' && $new !== '' && $old !== $new ) {
+				$pairs[] = array( 'old' => $old, 'new' => $new );
 			}
 		}
 
-		// Query ALL published pages that contain link= in their content.
+		if ( empty( $pairs ) ) {
+			wp_send_json_error( array( 'message' => 'No valid replacement pairs found.' ) );
+		}
+
+		// Build a SQL WHERE clause to find posts containing any of the old slugs.
 		global $wpdb;
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
-		$pages = $wpdb->get_results(
+		$like_clauses = array();
+		foreach ( $pairs as $p ) {
+			// phpcs:ignore WordPress.DB.PreparedSQLPlaceholders
+			$like_clauses[] = $wpdb->prepare( 'post_content LIKE %s', '%/' . $wpdb->esc_like( $p['old'] ) . '%' );
+		}
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+		$posts = $wpdb->get_results(
 			"SELECT ID, post_content FROM {$wpdb->posts}
-			 WHERE post_type = 'page' AND post_status = 'publish'
-			 AND post_content LIKE '%link=%'"
+			 WHERE post_status IN ('publish','draft','private')
+			 AND (" . implode( ' OR ', $like_clauses ) . ')'
 		);
 
-		$fixed   = 0;
-		$details = array();
+		$fixed       = 0;
+		$details     = array();
+		$total_links = 0;
 
-		foreach ( $pages as $page ) {
-			$content     = $page->post_content;
+		foreach ( $posts as $post ) {
+			$content     = $post->post_content;
 			$new_content = $content;
 
-			// Find all link="..." attributes.
-			if ( ! preg_match_all( '/link="([^"]+)"/', $content, $matches, PREG_SET_ORDER ) ) {
-				continue;
-			}
-
-			$already_replaced = array(); // Avoid replacing the same link string twice.
-
-			foreach ( $matches as $m ) {
-				$link_url = $m[1];
-
-				if ( isset( $already_replaced[ $link_url ] ) ) {
-					continue;
-				}
-
-				// Parse path segments from the URL.
-				$path = wp_parse_url( $link_url, PHP_URL_PATH );
-				if ( ! $path ) {
-					continue;
-				}
-
-				$segments = array_values( array_filter( explode( '/', trim( $path, '/' ) ) ) );
-				if ( count( $segments ) < 2 ) {
-					continue; // Need at least parent/child.
-				}
-
-				$child_slug  = end( $segments );
-				$parent_slug = $segments[ count( $segments ) - 2 ];
-
-				// Try to match this link to a parent term + child term.
-				$matched_parent = null;
-				$matched_child  = null;
-
-				foreach ( $parent_terms as $pid => $pt ) {
-					$children = $child_terms[ $pid ] ?? array();
-					if ( empty( $children ) ) {
-						continue;
-					}
-
-					// Check if the parent path segment relates to this parent term.
-					$parent_relates = (
-						$parent_slug === $pt->slug
-						|| strpos( $pt->slug, $parent_slug ) !== false
-						|| strpos( $parent_slug, $pt->slug ) !== false
-					);
-
-					if ( ! $parent_relates ) {
-						continue;
-					}
-
-					// Exact child slug match — only needs parent path update.
-					foreach ( $children as $ct ) {
-						if ( $ct->slug === $child_slug ) {
-							$matched_parent = $pt;
-							$matched_child  = $ct;
-							break 2;
-						}
-					}
-
-					// Word-similarity match for renamed child slugs.
-					$best = $this->find_best_slug_match( $child_slug, $children );
-					if ( $best ) {
-						$matched_parent = $pt;
-						$matched_child  = $best;
-						break;
-					}
-				}
-
-				if ( ! $matched_parent || ! $matched_child ) {
-					continue;
-				}
-
-				$new_url = '/' . $matched_parent->slug . '/' . $matched_child->slug;
-				if ( $link_url === $new_url ) {
-					continue;
-				}
-
-				$new_content = str_replace(
-					'link="' . $link_url . '"',
-					'link="' . $new_url . '"',
-					$new_content
-				);
-
-				$already_replaced[ $link_url ] = true;
-				$details[] = $link_url . ' &rarr; ' . $new_url;
+			foreach ( $pairs as $p ) {
+				// Replace /old-slug/ with /new-slug/ (mid-path).
+				$new_content = str_replace( '/' . $p['old'] . '/', '/' . $p['new'] . '/', $new_content );
+				// Replace /old-slug" with /new-slug" (end of quoted attribute).
+				$new_content = str_replace( '/' . $p['old'] . '"', '/' . $p['new'] . '"', $new_content );
+				// Replace /old-slug' with /new-slug' (single-quoted attribute).
+				$new_content = str_replace( '/' . $p['old'] . "'", '/' . $p['new'] . "'", $new_content );
 			}
 
 			if ( $new_content !== $content ) {
 				wp_update_post( array(
-					'ID'           => $page->ID,
+					'ID'           => $post->ID,
 					'post_content' => $new_content,
 				) );
 				$fixed++;
+
+				// Count individual replacements for reporting.
+				foreach ( $pairs as $p ) {
+					$count = substr_count( $content, '/' . $p['old'] . '/' )
+					       + substr_count( $content, '/' . $p['old'] . '"' )
+					       + substr_count( $content, '/' . $p['old'] . "'" );
+					if ( $count > 0 ) {
+						$details[] = sprintf(
+							'Page #%d: /%s &rarr; /%s (%d occurrence%s)',
+							$post->ID,
+							esc_html( $p['old'] ),
+							esc_html( $p['new'] ),
+							$count,
+							$count !== 1 ? 's' : ''
+						);
+						$total_links += $count;
+					}
+				}
 			}
 		}
 
 		if ( $fixed > 0 ) {
-			$message = sprintf( '%d page(s) updated with %d link(s) fixed.', $fixed, count( $details ) );
+			$message = sprintf( '%d post(s) updated, %d link(s) fixed.', $fixed, $total_links );
 		} else {
-			$message = 'No stale links found — all links are already up to date.';
+			$message = 'No matches found — the old slugs were not found in any page content.';
 		}
 
 		wp_send_json_success( array(
@@ -1117,46 +1092,6 @@ class CPO_Admin {
 			'fixed'   => $fixed,
 			'details' => $details,
 		) );
-	}
-
-	/**
-	 * Match a stale slug to the best current term by shared significant words.
-	 *
-	 * Words shorter than 3 characters are ignored to avoid false matches on
-	 * common fragments like "the", "of", "ho", etc.
-	 *
-	 * @param string    $stale_slug The old slug extracted from the link.
-	 * @param WP_Term[] $terms      Array of candidate terms to match against.
-	 * @return WP_Term|null The best matching term, or null if no match.
-	 */
-	private function find_best_slug_match( $stale_slug, $terms ) {
-		$stale_words = array_filter(
-			explode( '-', $stale_slug ),
-			function ( $w ) { return strlen( $w ) >= 3; }
-		);
-
-		if ( empty( $stale_words ) ) {
-			return null;
-		}
-
-		$best       = null;
-		$best_score = 0;
-
-		foreach ( $terms as $term ) {
-			$term_words = array_filter(
-				explode( '-', $term->slug ),
-				function ( $w ) { return strlen( $w ) >= 3; }
-			);
-
-			$common = array_intersect( $stale_words, $term_words );
-
-			if ( count( $common ) > $best_score ) {
-				$best_score = count( $common );
-				$best       = $term;
-			}
-		}
-
-		return $best;
 	}
 
 	/**
