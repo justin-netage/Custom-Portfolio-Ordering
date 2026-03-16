@@ -25,6 +25,7 @@ class CPO_Admin {
 		add_action( 'wp_ajax_cpo_get_sub_cats', array( $this, 'ajax_get_sub_cats' ) );
 		add_action( 'wp_ajax_cpo_save_grid_order', array( $this, 'ajax_save_grid_order' ) );
 		add_action( 'wp_ajax_cpo_get_term_images', array( $this, 'ajax_get_term_images' ) );
+		add_action( 'wp_ajax_cpo_fix_links', array( $this, 'ajax_fix_links' ) );
 	}
 
 	/**
@@ -356,6 +357,18 @@ class CPO_Admin {
 
 			<div id="cpo-status" class="cpo-status"></div>
 
+			<div class="cpo-fix-links-bar" style="margin:12px 0;padding:10px 14px;background:#fff;border:1px solid #c3c4c7;border-left:4px solid #dba617;">
+				<strong><?php esc_html_e( 'Renamed some categories?', 'custom-portfolio-ordering' ); ?></strong>
+				<?php esc_html_e( 'Click below to scan all parent pages and update stale links to match current term slugs.', 'custom-portfolio-ordering' ); ?>
+				<br><br>
+				<button type="button" id="cpo-fix-links" class="button button-secondary">
+					<span class="dashicons dashicons-admin-links" style="vertical-align:middle;margin-top:-2px;"></span>
+					<?php esc_html_e( 'Fix All Page Links', 'custom-portfolio-ordering' ); ?>
+				</button>
+				<span id="cpo-fix-links-spinner" class="spinner" style="float:none;vertical-align:middle;"></span>
+				<span id="cpo-fix-links-result" style="margin-left:8px;"></span>
+			</div>
+
 			<div id="cpo-list-wrapper">
 				<p class="cpo-placeholder"><?php esc_html_e( 'Select a taxonomy and category above to load items.', 'custom-portfolio-ordering' ); ?></p>
 			</div>
@@ -388,6 +401,41 @@ class CPO_Admin {
 				echo 'cpoTerms[' . wp_json_encode( $slug ) . '] = ' . wp_json_encode( $term_data ) . ";\n";
 			}
 			?>
+
+			// Fix Links button handler.
+			jQuery(function($){
+				$('#cpo-fix-links').on('click', function(){
+					var $btn     = $(this);
+					var $spinner = $('#cpo-fix-links-spinner');
+					var $result  = $('#cpo-fix-links-result');
+
+					$btn.prop('disabled', true);
+					$spinner.addClass('is-active');
+					$result.text('');
+
+					$.post(<?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>, {
+						action: 'cpo_fix_links',
+						nonce:  <?php echo wp_json_encode( wp_create_nonce( 'cpo_sort_nonce' ) ); ?>
+					}, function(response){
+						$btn.prop('disabled', false);
+						$spinner.removeClass('is-active');
+
+						if (response.success) {
+							var msg = response.data.message;
+							if (response.data.details && response.data.details.length) {
+								msg += ' (' + response.data.details.join(', ') + ')';
+							}
+							$result.css('color', '#00a32a').text(msg);
+						} else {
+							$result.css('color', '#d63638').text(response.data.message || 'Fix failed.');
+						}
+					}).fail(function(){
+						$btn.prop('disabled', false);
+						$spinner.removeClass('is-active');
+						$result.css('color', '#d63638').text('Request failed. Please try again.');
+					});
+				});
+			});
 		</script>
 		<?php
 	}
@@ -910,6 +958,157 @@ class CPO_Admin {
 		wp_send_json_success( array( 'ids' => $attachment_ids ) );
 	}
 
+	/**
+	 * AJAX: Scan all parent-category pages and update stale link URLs in [col] blocks
+	 * to match the current term slugs. This is a one-click migration for renamed terms.
+	 */
+	public function ajax_fix_links() {
+		check_ajax_referer( 'cpo_sort_nonce', 'nonce' );
+
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			wp_send_json_error( array( 'message' => 'Permission denied.' ) );
+		}
+
+		$taxonomies = $this->get_taxonomies();
+		$fixed      = 0;
+		$skipped    = 0;
+		$details    = array();
+
+		foreach ( $taxonomies as $tax_slug => $tax_obj ) {
+			// Get all top-level (parent) terms.
+			$parent_terms = get_terms( array(
+				'taxonomy'   => $tax_slug,
+				'parent'     => 0,
+				'hide_empty' => false,
+			) );
+
+			if ( is_wp_error( $parent_terms ) || empty( $parent_terms ) ) {
+				continue;
+			}
+
+			foreach ( $parent_terms as $parent_term ) {
+				// Find the matching page by slug.
+				$pages = get_posts( array(
+					'post_type'      => 'page',
+					'post_status'    => 'publish',
+					'posts_per_page' => 1,
+					'name'           => $parent_term->slug,
+					'post_parent'    => 0,
+				) );
+
+				if ( empty( $pages ) ) {
+					continue;
+				}
+
+				$page    = $pages[0];
+				$content = $page->post_content;
+
+				if ( ! preg_match( '/(\[row width="full-width"\])(.*?)(\[\/row\])/s', $content, $row_match ) ) {
+					continue;
+				}
+
+				// Get sub-terms for this parent.
+				$sub_terms = get_terms( array(
+					'taxonomy'   => $tax_slug,
+					'parent'     => $parent_term->term_id,
+					'hide_empty' => false,
+				) );
+
+				if ( is_wp_error( $sub_terms ) || empty( $sub_terms ) ) {
+					continue;
+				}
+
+				// Build a slug lookup for current sub-terms.
+				$current_slugs = array();
+				foreach ( $sub_terms as $st ) {
+					$current_slugs[ $st->slug ] = $st;
+				}
+
+				// Extract [col] blocks and their link slugs.
+				preg_match_all( '/\[col[^\]]*\].*?\[\/col\]/s', $row_match[2], $col_matches );
+				$cols = $col_matches[0] ?? array();
+
+				if ( empty( $cols ) ) {
+					continue;
+				}
+
+				// Match cols to sub-terms: exact slug first, then positional fallback.
+				$col_data = array();
+				foreach ( $cols as $col ) {
+					$link_slug = '';
+					if ( preg_match( '/link="[^"]*\/([^"\/]+)"/', $col, $lm ) ) {
+						$link_slug = $lm[1];
+					}
+					$col_data[] = array( 'markup' => $col, 'slug' => $link_slug );
+				}
+
+				$matched     = array(); // col_index → term object
+				$claimed_idx = array();
+
+				// First pass: exact slug match.
+				foreach ( $col_data as $i => $cd ) {
+					if ( $cd['slug'] && isset( $current_slugs[ $cd['slug'] ] ) ) {
+						$matched[ $i ] = $current_slugs[ $cd['slug'] ];
+						$claimed_idx[] = $i;
+						unset( $current_slugs[ $cd['slug'] ] );
+					}
+				}
+
+				// Second pass: pair unmatched cols with remaining sub-terms in order.
+				$remaining_terms = array_values( $current_slugs );
+				$rt_idx          = 0;
+				foreach ( $col_data as $i => $cd ) {
+					if ( ! isset( $matched[ $i ] ) && $rt_idx < count( $remaining_terms ) ) {
+						$matched[ $i ] = $remaining_terms[ $rt_idx ];
+						$rt_idx++;
+					}
+				}
+
+				// Rebuild cols with updated links.
+				$changed  = false;
+				$new_cols = array();
+				foreach ( $col_data as $i => $cd ) {
+					$col = $cd['markup'];
+					if ( isset( $matched[ $i ] ) ) {
+						$term     = $matched[ $i ];
+						$new_link = '/' . $parent_term->slug . '/' . $term->slug;
+						$updated  = preg_replace( '/link="[^"]*"/', 'link="' . $new_link . '"', $col );
+						if ( $updated !== $col ) {
+							$changed = true;
+							$details[] = $parent_term->name . ': ' . $cd['slug'] . ' → ' . $term->slug;
+						}
+						$new_cols[] = $updated;
+					} else {
+						$new_cols[] = $col;
+					}
+				}
+
+				if ( ! $changed ) {
+					$skipped++;
+					continue;
+				}
+
+				$new_row     = $row_match[1] . implode( '', $new_cols ) . $row_match[3];
+				$new_content = str_replace( $row_match[0], $new_row, $content );
+
+				$result = wp_update_post( array(
+					'ID'           => $page->ID,
+					'post_content' => $new_content,
+				) );
+
+				if ( ! is_wp_error( $result ) ) {
+					$fixed++;
+				}
+			}
+		}
+
+		wp_send_json_success( array(
+			'message' => sprintf( '%d page(s) updated, %d already correct.', $fixed, $skipped ),
+			'fixed'   => $fixed,
+			'skipped' => $skipped,
+			'details' => $details,
+		) );
+	}
 
 	/**
 	 * AJAX: Receive the uploaded CSV, store it temporarily, and return a job ID + row count.
