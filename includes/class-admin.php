@@ -909,7 +909,13 @@ class CPO_Admin {
 			// Apply image changes.
 			if ( ! empty( $images[ $term_id ] ) ) {
 				$new_img = $images[ $term_id ];
-				$col     = preg_replace( '/(\[ux_image_box[^\]]*\bimg=")[^"]*(")/s', '${1}' . $new_img . '${2}', $col );
+				if ( preg_match( '/\[ux_image_box[^\]]*\bimg="/', $col ) ) {
+					// Replace existing img attribute value.
+					$col = preg_replace( '/(\[ux_image_box[^\]]*\bimg=")[^"]*(")/s', '${1}' . $new_img . '${2}', $col );
+				} else {
+					// No img attribute exists — add one to the shortcode tag.
+					$col = preg_replace( '/(\[ux_image_box)([^\]]*\])/', '${1} img="' . $new_img . '"${2}', $col );
+				}
 			}
 
 			$new_cols[] = $col;
