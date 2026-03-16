@@ -970,8 +970,32 @@ class CPO_Admin {
 			'post_content' => $new_content,
 		) );
 
-		if ( is_wp_error( $result ) ) {
+		if ( is_wp_error( $result ) || 0 === $result ) {
 			wp_send_json_error( array( 'message' => 'Failed to update the page.' ) );
+		}
+
+		// Clear all caches for this page so the frontend shows updated images.
+		clean_post_cache( $page->ID );
+
+		// Flatsome / UX Builder: delete any cached CSS or shortcode data.
+		delete_post_meta( $page->ID, '_ux_builder_shortcodes' );
+		delete_post_meta( $page->ID, 'ux_builder_css' );
+
+		// Purge page caches for popular caching plugins.
+		if ( function_exists( 'wp_cache_post_change' ) ) {
+			wp_cache_post_change( $page->ID ); // WP Super Cache.
+		}
+		if ( function_exists( 'w3tc_flush_post' ) ) {
+			w3tc_flush_post( $page->ID ); // W3 Total Cache.
+		}
+		if ( function_exists( 'wpfc_clear_post_cache_by_id' ) ) {
+			wpfc_clear_post_cache_by_id( $page->ID ); // WP Fastest Cache.
+		}
+		if ( function_exists( 'rocket_clean_post' ) ) {
+			rocket_clean_post( $page->ID ); // WP Rocket.
+		}
+		if ( class_exists( 'LiteSpeed_Cache_API' ) && method_exists( 'LiteSpeed_Cache_API', 'purge_post' ) ) {
+			\LiteSpeed_Cache_API::purge_post( $page->ID ); // LiteSpeed Cache.
 		}
 
 		wp_send_json_success( array(
