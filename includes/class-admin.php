@@ -532,6 +532,7 @@ class CPO_Admin {
 				'status'    => $post->post_status,
 				'thumbnail' => get_the_post_thumbnail_url( $post->ID, 'medium' ) ?: get_the_post_thumbnail_url( $post->ID, 'thumbnail' ),
 				'order'     => $order !== '' ? (int) $order : null,
+				'date'      => $post->post_date,
 			);
 
 			if ( $order !== '' && $order !== false ) {
