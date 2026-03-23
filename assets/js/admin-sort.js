@@ -204,7 +204,7 @@
 				? '<img src="' + item.thumbnail + '" alt="" />'
 				: '<span class="cpo-no-thumb dashicons dashicons-format-image"></span>';
 
-			html += '<li class="cpo-item" data-id="' + item.id + '">';
+			html += '<li class="cpo-item" data-id="' + item.id + '" data-date="' + (item.date || '') + '">';
 			html += '<span class="cpo-col-order cpo-handle"><span class="cpo-order-num">' + (index + 1) + '</span><span class="dashicons dashicons-menu cpo-drag-icon"></span></span>';
 			html += '<span class="cpo-col-thumb">' + thumb + '</span>';
 			html += '<span class="cpo-col-title">' + escHtml(item.title) + '</span>';
@@ -216,6 +216,7 @@
 		html += '</ul>';
 		html += '<div class="cpo-actions">';
 		html += '<button type="button" id="cpo-sort-az" class="button button-secondary"><span class="dashicons dashicons-sort" style="vertical-align:middle;margin-right:4px;"></span>Sort A–Z</button>';
+		html += '<button type="button" id="cpo-sort-date" class="button button-secondary"><span class="dashicons dashicons-calendar-alt" style="vertical-align:middle;margin-right:4px;"></span>Sort by Date</button>';
 		html += '<button type="button" id="cpo-save-order" class="button button-primary">Save Order</button>';
 		html += '<span id="cpo-save-spinner" class="spinner" style="float:none;"></span>';
 		html += '</div>';
@@ -258,6 +259,20 @@
 				var titleA = $(a).find('.cpo-col-title').text().toLowerCase();
 				var titleB = $(b).find('.cpo-col-title').text().toLowerCase();
 				return titleA.localeCompare(titleB);
+			});
+			$list.append($items);
+			updateOrderNumbers();
+			saveOrder();
+		});
+
+		// Sort by Date button handler (oldest first).
+		$('#cpo-sort-date').off('click').on('click', function () {
+			var $list = $('#cpo-sortable');
+			var $items = $list.children('.cpo-item');
+			$items.sort(function (a, b) {
+				var dateA = $(a).data('date') || '';
+				var dateB = $(b).data('date') || '';
+				return dateA.localeCompare(dateB);
 			});
 			$list.append($items);
 			updateOrderNumbers();
@@ -912,6 +927,7 @@
 		html += '</ul>';
 		html += '<div class="cpo-actions">';
 		html += '<button type="button" id="cpo-sort-subcat-az" class="button button-secondary"><span class="dashicons dashicons-sort" style="vertical-align:middle;margin-right:4px;"></span>Sort A–Z</button>';
+		html += '<button type="button" id="cpo-sort-subcat-date" class="button button-secondary"><span class="dashicons dashicons-calendar-alt" style="vertical-align:middle;margin-right:4px;"></span>Sort by Date</button>';
 		if (hasPage) {
 			html += '<button type="button" id="cpo-save-grid-order" class="button button-primary">Save Grid Order</button>';
 			html += '<span id="cpo-grid-save-spinner" class="spinner" style="float:none;"></span>';
@@ -942,6 +958,20 @@
 				var nameA = $(a).find('.cpo-col-title').text().toLowerCase();
 				var nameB = $(b).find('.cpo-col-title').text().toLowerCase();
 				return nameA.localeCompare(nameB);
+			});
+			$list.append($items);
+			$list.find('.cpo-item').each(function (index) {
+				$(this).find('.cpo-order-num').text(index + 1);
+			});
+			saveGridOrder();
+		});
+
+		// Sort by Date button handler for sub-categories (oldest first, by term ID).
+		$('#cpo-sort-subcat-date').off('click').on('click', function () {
+			var $list = $('#cpo-grid-subcat-list');
+			var $items = $list.children('.cpo-item');
+			$items.sort(function (a, b) {
+				return parseInt($(a).data('id'), 10) - parseInt($(b).data('id'), 10);
 			});
 			$list.append($items);
 			$list.find('.cpo-item').each(function (index) {
