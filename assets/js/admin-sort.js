@@ -215,6 +215,7 @@
 
 		html += '</ul>';
 		html += '<div class="cpo-actions">';
+		html += '<button type="button" id="cpo-sort-az" class="button button-secondary"><span class="dashicons dashicons-sort" style="vertical-align:middle;margin-right:4px;"></span>Sort A–Z</button>';
 		html += '<button type="button" id="cpo-save-order" class="button button-primary">Save Order</button>';
 		html += '<span id="cpo-save-spinner" class="spinner" style="float:none;"></span>';
 		html += '</div>';
@@ -248,6 +249,20 @@
 
 		// Save button handler.
 		$('#cpo-save-order').off('click').on('click', saveOrder);
+
+		// Sort A-Z button handler.
+		$('#cpo-sort-az').off('click').on('click', function () {
+			var $list = $('#cpo-sortable');
+			var $items = $list.children('.cpo-item');
+			$items.sort(function (a, b) {
+				var titleA = $(a).find('.cpo-col-title').text().toLowerCase();
+				var titleB = $(b).find('.cpo-col-title').text().toLowerCase();
+				return titleA.localeCompare(titleB);
+			});
+			$list.append($items);
+			updateOrderNumbers();
+			saveOrder();
+		});
 	}
 
 	/**
@@ -896,6 +911,7 @@
 
 		html += '</ul>';
 		html += '<div class="cpo-actions">';
+		html += '<button type="button" id="cpo-sort-subcat-az" class="button button-secondary"><span class="dashicons dashicons-sort" style="vertical-align:middle;margin-right:4px;"></span>Sort A–Z</button>';
 		if (hasPage) {
 			html += '<button type="button" id="cpo-save-grid-order" class="button button-primary">Save Grid Order</button>';
 			html += '<span id="cpo-grid-save-spinner" class="spinner" style="float:none;"></span>';
@@ -917,6 +933,22 @@
 		});
 
 		$('#cpo-save-grid-order').off('click').on('click', saveGridOrder);
+
+		// Sort A-Z button handler for sub-categories.
+		$('#cpo-sort-subcat-az').off('click').on('click', function () {
+			var $list = $('#cpo-grid-subcat-list');
+			var $items = $list.children('.cpo-item');
+			$items.sort(function (a, b) {
+				var nameA = $(a).find('.cpo-col-title').text().toLowerCase();
+				var nameB = $(b).find('.cpo-col-title').text().toLowerCase();
+				return nameA.localeCompare(nameB);
+			});
+			$list.append($items);
+			$list.find('.cpo-item').each(function (index) {
+				$(this).find('.cpo-order-num').text(index + 1);
+			});
+			saveGridOrder();
+		});
 	}
 
 	/**
