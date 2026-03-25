@@ -1187,3 +1187,39 @@ body.cpo-modal-open {
 	width: 16px;
 	height: 16px;
 }
+
+/* Category checkbox tree */
+.cpo-edit-cat-tree {
+	max-height: 250px;
+	overflow-y: auto;
+	border: 1px solid #ddd;
+	border-radius: 3px;
+	padding: 8px 12px;
+	background: #fff;
+	max-width: 320px;
+}
+
+.cpo-edit-cat-group {
+	margin-bottom: 8px;
+}
+
+.cpo-edit-cat-group:last-child {
+	margin-bottom: 0;
+}
+
+.cpo-edit-cat-parent-label {
+	display: block;
+	margin-bottom: 4px;
+	cursor: pointer;
+}
+
+.cpo-edit-cat-children {
+	margin-left: 20px;
+}
+
+.cpo-edit-cat-children label {
+	display: block;
+	margin-bottom: 2px;
+	cursor: pointer;
+	font-weight: normal;
+}
