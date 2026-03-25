@@ -1569,11 +1569,11 @@ class CPO_Admin {
 			wp_send_json_error( array( 'message' => 'Permission denied.' ) );
 		}
 
-		$title          = sanitize_text_field( wp_unslash( $_POST['title'] ?? '' ) );
-		$image_id       = absint( $_POST['image_id'] ?? 0 );
-		$taxonomy       = sanitize_text_field( wp_unslash( $_POST['taxonomy'] ?? '' ) );
-		$parent_term_id = absint( $_POST['parent_term_id'] ?? 0 );
-		$sub_term_id    = absint( $_POST['sub_term_id'] ?? 0 );
+		$title    = sanitize_text_field( wp_unslash( $_POST['title'] ?? '' ) );
+		$image_id = absint( $_POST['image_id'] ?? 0 );
+		$taxonomy = sanitize_text_field( wp_unslash( $_POST['taxonomy'] ?? '' ) );
+		$term_ids = isset( $_POST['term_ids'] ) ? array_map( 'absint', (array) $_POST['term_ids'] ) : array();
+		$term_ids = array_filter( $term_ids );
 
 		if ( empty( $title ) ) {
 			wp_send_json_error( array( 'message' => 'Title is required.' ) );
@@ -1595,30 +1595,20 @@ class CPO_Admin {
 		}
 
 		// Assign taxonomy terms.
-		if ( ! empty( $taxonomy ) ) {
-			$term_ids = array();
-			if ( $parent_term_id > 0 ) {
-				$term_ids[] = $parent_term_id;
-			}
-			if ( $sub_term_id > 0 ) {
-				$term_ids[] = $sub_term_id;
-			}
+		if ( ! empty( $taxonomy ) && ! empty( $term_ids ) ) {
+			wp_set_object_terms( $post_id, $term_ids, $taxonomy );
 
-			if ( ! empty( $term_ids ) ) {
-				wp_set_object_terms( $post_id, $term_ids, $taxonomy );
-
-				// Set ordering meta — append to end of each term's list.
-				global $wpdb;
-				foreach ( $term_ids as $tid ) {
-					$meta_key  = '_cpo_order_' . $tid;
-					$max_order = $wpdb->get_var( $wpdb->prepare(
-						"SELECT MAX(CAST(meta_value AS UNSIGNED)) FROM {$wpdb->postmeta} WHERE meta_key = %s",
-						$meta_key
-					) );
-					$new_order = ( $max_order !== null ) ? ( (int) $max_order + 1 ) : 0;
-					update_post_meta( $post_id, $meta_key, $new_order );
-					update_option( 'cpo_ordered_term_' . $tid, true );
-				}
+			// Set ordering meta — append to end of each term's list.
+			global $wpdb;
+			foreach ( $term_ids as $tid ) {
+				$meta_key  = '_cpo_order_' . $tid;
+				$max_order = $wpdb->get_var( $wpdb->prepare(
+					"SELECT MAX(CAST(meta_value AS UNSIGNED)) FROM {$wpdb->postmeta} WHERE meta_key = %s",
+					$meta_key
+				) );
+				$new_order = ( $max_order !== null ) ? ( (int) $max_order + 1 ) : 0;
+				update_post_meta( $post_id, $meta_key, $new_order );
+				update_option( 'cpo_ordered_term_' . $tid, true );
 			}
 		}
 
@@ -1891,19 +1881,9 @@ class CPO_Admin {
 						</td>
 					</tr>
 					<tr>
-						<th><label for="cpo-manage-item-parent"><?php esc_html_e( 'Parent Category', 'custom-portfolio-ordering' ); ?></label></th>
+						<th><?php esc_html_e( 'Categories', 'custom-portfolio-ordering' ); ?></th>
 						<td>
-							<select id="cpo-manage-item-parent">
-								<option value="0"><?php esc_html_e( '— Select —', 'custom-portfolio-ordering' ); ?></option>
-							</select>
-						</td>
-					</tr>
-					<tr>
-						<th><label for="cpo-manage-item-sub"><?php esc_html_e( 'Sub-Category', 'custom-portfolio-ordering' ); ?></label></th>
-						<td>
-							<select id="cpo-manage-item-sub">
-								<option value="0"><?php esc_html_e( '— Select parent first —', 'custom-portfolio-ordering' ); ?></option>
-							</select>
+							<div id="cpo-create-cat-tree"></div>
 						</td>
 					</tr>
 				</table>
@@ -2013,17 +1993,13 @@ class CPO_Admin {
 			$('#cpo-manage-cat-taxonomy').on('change', refreshCatParents);
 			refreshCatParents();
 
-			// --- Item form dropdowns ---
-			function refreshItemParents() {
-				populateParentDropdown($('#cpo-manage-item-parent'), $('#cpo-manage-item-taxonomy').val(), '— Select —');
-				populateChildDropdown($('#cpo-manage-item-sub'), $('#cpo-manage-item-taxonomy').val(), '0');
+			// --- Item form category checkbox tree ---
+			function refreshCreateCatTree() {
+				var tax = $('#cpo-manage-item-taxonomy').val();
+				$('#cpo-create-cat-tree').html(buildCategoryCheckboxes(tax, []));
 			}
-			$('#cpo-manage-item-taxonomy').on('change', refreshItemParents);
-			refreshItemParents();
-
-			$('#cpo-manage-item-parent').on('change', function() {
-				populateChildDropdown($('#cpo-manage-item-sub'), $('#cpo-manage-item-taxonomy').val(), $(this).val());
-			});
+			$('#cpo-manage-item-taxonomy').on('change', refreshCreateCatTree);
+			refreshCreateCatTree();
 
 			// --- Image picker ---
 			$('#cpo-manage-select-img').on('click', function(e) {
@@ -2091,7 +2067,7 @@ class CPO_Admin {
 						if (response.data.term && cpoManageTerms[tax]) {
 							cpoManageTerms[tax].push(response.data.term);
 							refreshCatParents();
-							refreshItemParents();
+							refreshCreateCatTree();
 						}
 
 						$('#cpo-manage-cat-name').val('');
@@ -2113,8 +2089,13 @@ class CPO_Admin {
 				var title    = $('#cpo-manage-item-title').val().trim();
 				var imageId  = $('#cpo-manage-img-id').val();
 				var tax      = $('#cpo-manage-item-taxonomy').val();
-				var parentId = $('#cpo-manage-item-parent').val();
-				var subId    = $('#cpo-manage-item-sub').val();
+
+				// Collect all checked categories.
+				var termIds = [];
+				$('#cpo-create-cat-tree input:checked').each(function() {
+					var val = parseInt($(this).val(), 10);
+					if (val && termIds.indexOf(val) === -1) termIds.push(val);
+				});
 
 				if (!title) {
 					$result.html('<p class="cpo-manage-error">Please enter a title.</p>');
@@ -2126,13 +2107,12 @@ class CPO_Admin {
 				$result.html('');
 
 				$.post(ajaxUrl, {
-					action:         'cpo_create_item',
-					nonce:          nonce,
-					title:          title,
-					image_id:       imageId || 0,
-					taxonomy:       tax,
-					parent_term_id: parentId || 0,
-					sub_term_id:    subId || 0
+					action:   'cpo_create_item',
+					nonce:    nonce,
+					title:    title,
+					image_id: imageId || 0,
+					taxonomy: tax,
+					term_ids: termIds
 				}, function(response) {
 					$btn.prop('disabled', false);
 					$spinner.removeClass('is-active');
@@ -2144,6 +2124,7 @@ class CPO_Admin {
 						$('#cpo-manage-img-id').val('');
 						$('#cpo-manage-img-preview').empty();
 						$('#cpo-manage-remove-img').hide();
+						$('#cpo-create-cat-tree input:checked').prop('checked', false);
 					} else {
 						$result.html('<p class="cpo-manage-error">' + (response.data.message || 'Failed.') + '</p>');
 					}
