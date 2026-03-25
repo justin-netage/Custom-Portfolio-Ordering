@@ -1013,3 +1013,177 @@ body.cpo-modal-open {
 	font-size: 13px;
 	color: #3c434a;
 }
+
+/* ── Edit Portfolio Items section ──────────────────────────────────────────── */
+
+.cpo-manage-section-wide {
+	max-width: 900px;
+}
+
+.cpo-edit-search-bar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 16px;
+	flex-wrap: wrap;
+}
+
+.cpo-edit-search-bar input[type="text"] {
+	min-width: 180px;
+	flex: 1;
+	max-width: 280px;
+}
+
+.cpo-edit-search-bar select {
+	min-width: 150px;
+}
+
+/* Edit list (non-sortable variant of .cpo-sortable) */
+.cpo-edit-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	border: 1px solid #ddd;
+	border-radius: 4px;
+	background: #fff;
+}
+
+.cpo-edit-list .cpo-item {
+	display: flex;
+	align-items: center;
+	padding: 6px 12px;
+	border-bottom: 1px solid #eee;
+	transition: background 0.15s ease;
+}
+
+.cpo-edit-list .cpo-item:last-child {
+	border-bottom: none;
+}
+
+.cpo-edit-list .cpo-item:hover {
+	background: #f6f7f7;
+}
+
+.cpo-edit-item-active {
+	background: #e8f0fe !important;
+}
+
+/* Categories column */
+.cpo-col-categories {
+	width: 180px;
+	flex-shrink: 0;
+	font-size: 12px;
+	color: #666;
+	padding: 0 8px;
+	line-height: 1.4;
+}
+
+/* Actions column (wider for two buttons) */
+.cpo-col-actions-wide {
+	width: 80px;
+	flex-shrink: 0;
+	text-align: center;
+	display: flex;
+	gap: 4px;
+	justify-content: center;
+}
+
+/* Edit button */
+.cpo-edit-btn {
+	background: none;
+	border: 1px solid transparent;
+	cursor: pointer;
+	color: #2271b1;
+	padding: 4px 6px;
+	border-radius: 3px;
+	line-height: 1;
+	transition: background 0.1s ease, color 0.1s ease;
+}
+
+.cpo-edit-btn:hover {
+	background: #e8f0fe;
+	border-color: #b2d4f5;
+	color: #135e96;
+}
+
+.cpo-edit-btn .dashicons {
+	font-size: 16px;
+	width: 16px;
+	height: 16px;
+}
+
+/* Inline edit form row */
+.cpo-edit-form-row {
+	background: #f9f9fb;
+	border-bottom: 1px solid #eee;
+	padding: 16px 20px;
+	list-style: none;
+}
+
+.cpo-edit-inline .form-table {
+	margin-bottom: 0;
+}
+
+.cpo-edit-inline .form-table th {
+	width: 140px;
+	padding: 8px 10px 8px 0;
+}
+
+.cpo-edit-inline .form-table td {
+	padding: 8px 0;
+}
+
+.cpo-edit-inline input[type="text"],
+.cpo-edit-inline select {
+	width: 100%;
+	max-width: 320px;
+}
+
+.cpo-edit-img-preview img {
+	max-width: 120px;
+	max-height: 120px;
+	border: 1px solid #ddd;
+	border-radius: 3px;
+	display: block;
+	margin-bottom: 6px;
+}
+
+.cpo-edit-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 12px;
+}
+
+/* Pagination */
+.cpo-edit-pagination {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin-top: 12px;
+	justify-content: center;
+	font-size: 13px;
+}
+
+/* Delete button in edit table */
+.cpo-edit-delete-btn {
+	background: none;
+	border: 1px solid transparent;
+	cursor: pointer;
+	color: #b32d2e;
+	padding: 4px 6px;
+	border-radius: 3px;
+	line-height: 1;
+	transition: background 0.1s ease;
+}
+
+.cpo-edit-delete-btn:hover {
+	background: #fcecec;
+	border-color: #e0b4b4;
+}
+
+.cpo-edit-delete-btn .dashicons {
+	font-size: 16px;
+	width: 16px;
+	height: 16px;
+}
