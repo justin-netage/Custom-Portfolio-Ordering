@@ -26,6 +26,8 @@ class CPO_Admin {
 		add_action( 'wp_ajax_cpo_save_grid_order', array( $this, 'ajax_save_grid_order' ) );
 		add_action( 'wp_ajax_cpo_get_term_images', array( $this, 'ajax_get_term_images' ) );
 		add_action( 'wp_ajax_cpo_fix_links', array( $this, 'ajax_fix_links' ) );
+		add_action( 'wp_ajax_cpo_create_category', array( $this, 'ajax_create_category' ) );
+		add_action( 'wp_ajax_cpo_create_item', array( $this, 'ajax_create_item' ) );
 	}
 
 	/**
@@ -78,6 +80,15 @@ class CPO_Admin {
 			'cpo-import',
 			array( $this, 'render_import_page' )
 		);
+
+		$this->page_hooks[] = add_submenu_page(
+			'custom-portfolio-ordering',
+			__( 'Manage Portfolio', 'custom-portfolio-ordering' ),
+			__( 'Manage Items', 'custom-portfolio-ordering' ),
+			'edit_posts',
+			'cpo-manage',
+			array( $this, 'render_manage_page' )
+		);
 	}
 
 	/**
@@ -92,6 +103,7 @@ class CPO_Admin {
 			<nav class="nav-tab-wrapper">
 				<a href="<?php echo esc_url( admin_url( 'admin.php?page=custom-portfolio-ordering' ) ); ?>" class="nav-tab"><?php esc_html_e( 'Ordering', 'custom-portfolio-ordering' ); ?></a>
 				<a href="<?php echo esc_url( admin_url( 'admin.php?page=cpo-import' ) ); ?>" class="nav-tab nav-tab-active"><?php esc_html_e( 'Import Items', 'custom-portfolio-ordering' ); ?></a>
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=cpo-manage' ) ); ?>" class="nav-tab"><?php esc_html_e( 'Manage Items', 'custom-portfolio-ordering' ); ?></a>
 			</nav>
 
 			<div class="cpo-import-page">
@@ -333,6 +345,7 @@ class CPO_Admin {
 			<nav class="nav-tab-wrapper">
 				<a href="<?php echo esc_url( admin_url( 'admin.php?page=custom-portfolio-ordering' ) ); ?>" class="nav-tab nav-tab-active"><?php esc_html_e( 'Ordering', 'custom-portfolio-ordering' ); ?></a>
 				<a href="<?php echo esc_url( admin_url( 'admin.php?page=cpo-import' ) ); ?>" class="nav-tab"><?php esc_html_e( 'Import Items', 'custom-portfolio-ordering' ); ?></a>
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=cpo-manage' ) ); ?>" class="nav-tab"><?php esc_html_e( 'Manage Items', 'custom-portfolio-ordering' ); ?></a>
 			</nav>
 
 			<div class="cpo-controls">
@@ -1519,5 +1532,601 @@ class CPO_Admin {
 			'done'        => $done,
 			'diag'        => $diag,
 		) );
+	}
+
+	/**
+	 * Clear page caches after modifying page content.
+	 *
+	 * @param int $page_id The page ID to purge.
+	 */
+	private function purge_page_cache( $page_id ) {
+		clean_post_cache( $page_id );
+		delete_post_meta( $page_id, '_ux_builder_shortcodes' );
+		delete_post_meta( $page_id, 'ux_builder_css' );
+
+		if ( function_exists( 'wp_cache_post_change' ) ) {
+			wp_cache_post_change( $page_id );
+		}
+		if ( function_exists( 'w3tc_flush_post' ) ) {
+			w3tc_flush_post( $page_id );
+		}
+		if ( function_exists( 'wpfc_clear_post_cache_by_id' ) ) {
+			wpfc_clear_post_cache_by_id( $page_id );
+		}
+		if ( function_exists( 'rocket_clean_post' ) ) {
+			rocket_clean_post( $page_id );
+		}
+		if ( class_exists( 'LiteSpeed_Cache_API' ) && method_exists( 'LiteSpeed_Cache_API', 'purge_post' ) ) {
+			\LiteSpeed_Cache_API::purge_post( $page_id );
+		}
+	}
+
+	/**
+	 * AJAX: Create a taxonomy category and auto-generate its page.
+	 */
+	public function ajax_create_category() {
+		check_ajax_referer( 'cpo_sort_nonce', 'nonce' );
+
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			wp_send_json_error( array( 'message' => 'Permission denied.' ) );
+		}
+
+		$taxonomy  = sanitize_text_field( wp_unslash( $_POST['taxonomy'] ?? '' ) );
+		$parent_id = absint( $_POST['parent_id'] ?? 0 );
+		$name      = sanitize_text_field( wp_unslash( $_POST['name'] ?? '' ) );
+
+		if ( empty( $taxonomy ) || empty( $name ) ) {
+			wp_send_json_error( array( 'message' => 'Taxonomy and category name are required.' ) );
+		}
+
+		// Verify taxonomy exists and is attached to our post type.
+		$tax_obj = get_taxonomy( $taxonomy );
+		if ( ! $tax_obj || ! in_array( self::POST_TYPE, (array) $tax_obj->object_type, true ) ) {
+			wp_send_json_error( array( 'message' => 'Invalid taxonomy.' ) );
+		}
+
+		// Create the term.
+		$insert_args = array();
+		if ( $parent_id > 0 && $tax_obj->hierarchical ) {
+			$insert_args['parent'] = $parent_id;
+		}
+
+		$result = wp_insert_term( $name, $taxonomy, $insert_args );
+		if ( is_wp_error( $result ) ) {
+			if ( $result->get_error_code() === 'term_exists' ) {
+				wp_send_json_error( array( 'message' => 'A category with that name already exists.' ) );
+			}
+			wp_send_json_error( array( 'message' => $result->get_error_message() ) );
+		}
+
+		$term_id = $result['term_id'];
+		$term    = get_term( $term_id, $taxonomy );
+		$messages = array();
+		$page_id  = 0;
+
+		if ( $parent_id === 0 ) {
+			// Parent category: create a top-level page with an empty grid row.
+			$existing_page = get_posts( array(
+				'post_type'   => 'page',
+				'post_status' => 'any',
+				'name'        => $term->slug,
+				'post_parent' => 0,
+				'numberposts' => 1,
+			) );
+
+			if ( ! empty( $existing_page ) ) {
+				$page_id    = $existing_page[0]->ID;
+				$messages[] = sprintf( 'Page "%s" already exists (ID %d) — not creating a duplicate.', $term->name, $page_id );
+			} else {
+				$page_id = wp_insert_post( array(
+					'post_title'   => $term->name,
+					'post_name'    => $term->slug,
+					'post_type'    => 'page',
+					'post_status'  => 'publish',
+					'post_parent'  => 0,
+					'post_content' => '[row width="full-width"][/row]',
+				), true );
+
+				if ( is_wp_error( $page_id ) ) {
+					$messages[] = 'Category created but page generation failed: ' . $page_id->get_error_message();
+					$page_id    = 0;
+				} else {
+					$messages[] = sprintf( 'Page "%s" created (ID %d).', $term->name, $page_id );
+				}
+			}
+		} else {
+			// Sub-category: create a child page and update the parent page grid.
+			$parent_term = get_term( $parent_id, $taxonomy );
+			if ( ! $parent_term || is_wp_error( $parent_term ) ) {
+				$messages[] = 'Category created but parent term not found — page not generated.';
+			} else {
+				// Find the parent page.
+				$parent_pages = get_posts( array(
+					'post_type'   => 'page',
+					'post_status' => 'publish',
+					'name'        => $parent_term->slug,
+					'post_parent' => 0,
+					'numberposts' => 1,
+				) );
+
+				$parent_page_id = 0;
+				if ( ! empty( $parent_pages ) ) {
+					$parent_page_id = $parent_pages[0]->ID;
+				}
+
+				// Create the sub-category page.
+				$existing_sub = get_posts( array(
+					'post_type'   => 'page',
+					'post_status' => 'any',
+					'name'        => $term->slug,
+					'post_parent' => $parent_page_id,
+					'numberposts' => 1,
+				) );
+
+				if ( ! empty( $existing_sub ) ) {
+					$page_id    = $existing_sub[0]->ID;
+					$messages[] = sprintf( 'Sub-page "%s" already exists (ID %d).', $term->name, $page_id );
+				} else {
+					$page_id = wp_insert_post( array(
+						'post_title'   => $term->name,
+						'post_name'    => $term->slug,
+						'post_type'    => 'page',
+						'post_status'  => 'publish',
+						'post_parent'  => $parent_page_id,
+						'post_content' => '[row width="full-width"][/row]',
+					), true );
+
+					if ( is_wp_error( $page_id ) ) {
+						$messages[] = 'Category created but sub-page generation failed: ' . $page_id->get_error_message();
+						$page_id    = 0;
+					} else {
+						$messages[] = sprintf( 'Sub-page "%s" created (ID %d).', $term->name, $page_id );
+					}
+				}
+
+				// Append a [col] block to the parent page's grid row.
+				if ( $parent_page_id ) {
+					$parent_content = $parent_pages[0]->post_content;
+
+					if ( preg_match( '/(\[row[^\]]*width="full-width"[^\]]*\])(.*?)(\[\/row\])/s', $parent_content, $row_match ) ) {
+						// Extract col template from existing cols.
+						$col_attrs = ' span="4" span__sm="12"';
+						$ib_attrs  = '';
+						preg_match_all( '/\[col[^\]]*\].*?\[\/col\]/s', $row_match[2], $col_matches );
+						if ( ! empty( $col_matches[0] ) ) {
+							$first_col = $col_matches[0][0];
+							if ( preg_match( '/\[col([^\]]*)\]/', $first_col, $ct ) ) {
+								$col_attrs = $ct[1];
+							}
+							if ( preg_match( '/\[ux_image_box([^\]]*)\]/', $first_col, $ib ) ) {
+								$ib_attrs = preg_replace( '/\s*\bimg="[^"]*"/', '', $ib[1] );
+								$ib_attrs = preg_replace( '/\s*\blink="[^"]*"/', '', $ib_attrs );
+							}
+						}
+
+						$new_link = '/' . $parent_term->slug . '/' . $term->slug;
+						$new_col  = '[col' . $col_attrs . '][ux_image_box' . $ib_attrs . ' img="" link="' . $new_link . '"]' . $term->name . '[/ux_image_box][/col]';
+
+						$new_row     = $row_match[1] . $row_match[2] . $new_col . $row_match[3];
+						$new_content = str_replace( $row_match[0], $new_row, $parent_content );
+
+						wp_update_post( array(
+							'ID'           => $parent_page_id,
+							'post_content' => $new_content,
+						) );
+
+						$this->purge_page_cache( $parent_page_id );
+						$messages[] = 'Parent page updated with new grid entry.';
+					} else {
+						$messages[] = 'Parent page found but no grid row detected — grid entry not added.';
+					}
+				} else {
+					$messages[] = 'Parent page not found — grid entry not added. Create the parent category page first.';
+				}
+			}
+		}
+
+		wp_send_json_success( array(
+			'message'  => sprintf( 'Category "%s" created successfully.', $name ),
+			'details'  => $messages,
+			'term_id'  => $term_id,
+			'term'     => array(
+				'id'     => $term_id,
+				'name'   => $term->name,
+				'slug'   => $term->slug,
+				'parent' => $term->parent,
+				'count'  => 0,
+			),
+			'page_id'  => $page_id,
+		) );
+	}
+
+	/**
+	 * AJAX: Create a new portfolio item.
+	 */
+	public function ajax_create_item() {
+		check_ajax_referer( 'cpo_sort_nonce', 'nonce' );
+
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			wp_send_json_error( array( 'message' => 'Permission denied.' ) );
+		}
+
+		$title          = sanitize_text_field( wp_unslash( $_POST['title'] ?? '' ) );
+		$image_id       = absint( $_POST['image_id'] ?? 0 );
+		$taxonomy       = sanitize_text_field( wp_unslash( $_POST['taxonomy'] ?? '' ) );
+		$parent_term_id = absint( $_POST['parent_term_id'] ?? 0 );
+		$sub_term_id    = absint( $_POST['sub_term_id'] ?? 0 );
+
+		if ( empty( $title ) ) {
+			wp_send_json_error( array( 'message' => 'Title is required.' ) );
+		}
+
+		$post_id = wp_insert_post( array(
+			'post_title'  => $title,
+			'post_type'   => self::POST_TYPE,
+			'post_status' => 'publish',
+		), true );
+
+		if ( is_wp_error( $post_id ) ) {
+			wp_send_json_error( array( 'message' => 'Failed to create item: ' . $post_id->get_error_message() ) );
+		}
+
+		// Set featured image.
+		if ( $image_id > 0 ) {
+			set_post_thumbnail( $post_id, $image_id );
+		}
+
+		// Assign taxonomy terms.
+		if ( ! empty( $taxonomy ) ) {
+			$term_ids = array();
+			if ( $parent_term_id > 0 ) {
+				$term_ids[] = $parent_term_id;
+			}
+			if ( $sub_term_id > 0 ) {
+				$term_ids[] = $sub_term_id;
+			}
+
+			if ( ! empty( $term_ids ) ) {
+				wp_set_object_terms( $post_id, $term_ids, $taxonomy );
+
+				// Set ordering meta — append to end of each term's list.
+				global $wpdb;
+				foreach ( $term_ids as $tid ) {
+					$meta_key  = '_cpo_order_' . $tid;
+					$max_order = $wpdb->get_var( $wpdb->prepare(
+						"SELECT MAX(CAST(meta_value AS UNSIGNED)) FROM {$wpdb->postmeta} WHERE meta_key = %s",
+						$meta_key
+					) );
+					$new_order = ( $max_order !== null ) ? ( (int) $max_order + 1 ) : 0;
+					update_post_meta( $post_id, $meta_key, $new_order );
+					update_option( 'cpo_ordered_term_' . $tid, true );
+				}
+			}
+		}
+
+		wp_send_json_success( array(
+			'message' => sprintf( 'Portfolio item "%s" created successfully.', $title ),
+			'post_id' => $post_id,
+		) );
+	}
+
+	/**
+	 * Render the Manage Items admin page.
+	 */
+	public function render_manage_page() {
+		$taxonomies = $this->get_taxonomies();
+		?>
+		<div class="wrap cpo-wrap">
+			<h1><?php esc_html_e( 'Manage Portfolio', 'custom-portfolio-ordering' ); ?></h1>
+			<p class="description"><?php esc_html_e( 'Create new categories and portfolio items. Pages are auto-generated when categories are created.', 'custom-portfolio-ordering' ); ?></p>
+
+			<nav class="nav-tab-wrapper">
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=custom-portfolio-ordering' ) ); ?>" class="nav-tab"><?php esc_html_e( 'Ordering', 'custom-portfolio-ordering' ); ?></a>
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=cpo-import' ) ); ?>" class="nav-tab"><?php esc_html_e( 'Import Items', 'custom-portfolio-ordering' ); ?></a>
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=cpo-manage' ) ); ?>" class="nav-tab nav-tab-active"><?php esc_html_e( 'Manage Items', 'custom-portfolio-ordering' ); ?></a>
+			</nav>
+
+			<!-- Create Category Section -->
+			<div class="cpo-manage-section">
+				<h2><?php esc_html_e( 'Create Category', 'custom-portfolio-ordering' ); ?></h2>
+				<p class="description"><?php esc_html_e( 'Create a parent or sub-category. A WordPress page will be auto-generated for it.', 'custom-portfolio-ordering' ); ?></p>
+				<table class="form-table cpo-manage-form-table">
+					<tr>
+						<th><label for="cpo-manage-cat-taxonomy"><?php esc_html_e( 'Taxonomy', 'custom-portfolio-ordering' ); ?></label></th>
+						<td>
+							<select id="cpo-manage-cat-taxonomy">
+								<?php foreach ( $taxonomies as $slug => $tax ) : ?>
+									<option value="<?php echo esc_attr( $slug ); ?>"><?php echo esc_html( $tax->labels->name ); ?></option>
+								<?php endforeach; ?>
+							</select>
+						</td>
+					</tr>
+					<tr>
+						<th><label for="cpo-manage-cat-parent"><?php esc_html_e( 'Parent Category', 'custom-portfolio-ordering' ); ?></label></th>
+						<td>
+							<select id="cpo-manage-cat-parent">
+								<option value="0"><?php esc_html_e( '— None (top-level) —', 'custom-portfolio-ordering' ); ?></option>
+							</select>
+							<p class="description"><?php esc_html_e( 'Leave as "None" to create a parent category, or select a parent to create a sub-category.', 'custom-portfolio-ordering' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th><label for="cpo-manage-cat-name"><?php esc_html_e( 'Category Name', 'custom-portfolio-ordering' ); ?></label></th>
+						<td><input type="text" id="cpo-manage-cat-name" class="regular-text" placeholder="<?php esc_attr_e( 'e.g. Wedding, Venue', 'custom-portfolio-ordering' ); ?>"></td>
+					</tr>
+				</table>
+				<p>
+					<button type="button" id="cpo-create-cat-btn" class="button button-primary"><?php esc_html_e( 'Create Category', 'custom-portfolio-ordering' ); ?></button>
+					<span id="cpo-create-cat-spinner" class="spinner" style="float:none;vertical-align:middle;"></span>
+				</p>
+				<div id="cpo-create-cat-result"></div>
+			</div>
+
+			<!-- Create Portfolio Item Section -->
+			<div class="cpo-manage-section">
+				<h2><?php esc_html_e( 'Create Portfolio Item', 'custom-portfolio-ordering' ); ?></h2>
+				<p class="description"><?php esc_html_e( 'Create a new portfolio item with a featured image and category assignment.', 'custom-portfolio-ordering' ); ?></p>
+				<table class="form-table cpo-manage-form-table">
+					<tr>
+						<th><label for="cpo-manage-item-title"><?php esc_html_e( 'Title', 'custom-portfolio-ordering' ); ?></label></th>
+						<td><input type="text" id="cpo-manage-item-title" class="regular-text" placeholder="<?php esc_attr_e( 'Portfolio item title', 'custom-portfolio-ordering' ); ?>"></td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Featured Image', 'custom-portfolio-ordering' ); ?></th>
+						<td>
+							<div id="cpo-manage-img-preview" class="cpo-manage-img-preview"></div>
+							<input type="hidden" id="cpo-manage-img-id" value="">
+							<button type="button" class="button" id="cpo-manage-select-img">
+								<span class="dashicons dashicons-format-image" style="vertical-align:middle;margin-right:4px;"></span><?php esc_html_e( 'Select Image', 'custom-portfolio-ordering' ); ?>
+							</button>
+							<button type="button" class="button" id="cpo-manage-remove-img" style="display:none;">
+								<span class="dashicons dashicons-no" style="vertical-align:middle;margin-right:2px;"></span><?php esc_html_e( 'Remove', 'custom-portfolio-ordering' ); ?>
+							</button>
+						</td>
+					</tr>
+					<tr>
+						<th><label for="cpo-manage-item-taxonomy"><?php esc_html_e( 'Taxonomy', 'custom-portfolio-ordering' ); ?></label></th>
+						<td>
+							<select id="cpo-manage-item-taxonomy">
+								<?php foreach ( $taxonomies as $slug => $tax ) : ?>
+									<option value="<?php echo esc_attr( $slug ); ?>"><?php echo esc_html( $tax->labels->name ); ?></option>
+								<?php endforeach; ?>
+							</select>
+						</td>
+					</tr>
+					<tr>
+						<th><label for="cpo-manage-item-parent"><?php esc_html_e( 'Parent Category', 'custom-portfolio-ordering' ); ?></label></th>
+						<td>
+							<select id="cpo-manage-item-parent">
+								<option value="0"><?php esc_html_e( '— Select —', 'custom-portfolio-ordering' ); ?></option>
+							</select>
+						</td>
+					</tr>
+					<tr>
+						<th><label for="cpo-manage-item-sub"><?php esc_html_e( 'Sub-Category', 'custom-portfolio-ordering' ); ?></label></th>
+						<td>
+							<select id="cpo-manage-item-sub">
+								<option value="0"><?php esc_html_e( '— Select parent first —', 'custom-portfolio-ordering' ); ?></option>
+							</select>
+						</td>
+					</tr>
+				</table>
+				<p>
+					<button type="button" id="cpo-create-item-btn" class="button button-primary"><?php esc_html_e( 'Create Item', 'custom-portfolio-ordering' ); ?></button>
+					<span id="cpo-create-item-spinner" class="spinner" style="float:none;vertical-align:middle;"></span>
+				</p>
+				<div id="cpo-create-item-result"></div>
+			</div>
+		</div>
+
+		<script>
+		(function($) {
+			var nonce   = <?php echo wp_json_encode( wp_create_nonce( 'cpo_sort_nonce' ) ); ?>;
+			var ajaxUrl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
+
+			// Embed term data so dropdowns can be populated client-side.
+			var cpoManageTerms = {};
+			<?php
+			foreach ( $taxonomies as $slug => $tax ) {
+				$terms = get_terms( array(
+					'taxonomy'   => $slug,
+					'hide_empty' => false,
+					'orderby'    => 'name',
+					'order'      => 'ASC',
+				) );
+				$term_data = array();
+				if ( ! is_wp_error( $terms ) ) {
+					foreach ( $terms as $t ) {
+						$term_data[] = array(
+							'id'     => $t->term_id,
+							'name'   => $t->name,
+							'parent' => $t->parent,
+						);
+					}
+				}
+				echo 'cpoManageTerms[' . wp_json_encode( $slug ) . '] = ' . wp_json_encode( $term_data ) . ";\n";
+			}
+			?>
+
+			function getParentTerms(tax) {
+				if (!cpoManageTerms[tax]) return [];
+				return cpoManageTerms[tax].filter(function(t) { return t.parent === 0; });
+			}
+
+			function getChildTerms(tax, parentId) {
+				if (!cpoManageTerms[tax]) return [];
+				var pid = parseInt(parentId, 10);
+				return cpoManageTerms[tax].filter(function(t) { return t.parent === pid; });
+			}
+
+			function populateParentDropdown($select, tax, emptyLabel) {
+				$select.empty().append('<option value="0">' + emptyLabel + '</option>');
+				getParentTerms(tax).forEach(function(t) {
+					$select.append('<option value="' + t.id + '">' + t.name + '</option>');
+				});
+			}
+
+			function populateChildDropdown($select, tax, parentId) {
+				$select.empty();
+				if (!parentId || parentId === '0') {
+					$select.append('<option value="0">&mdash; Select parent first &mdash;</option>');
+					return;
+				}
+				$select.append('<option value="0">&mdash; Select &mdash;</option>');
+				getChildTerms(tax, parentId).forEach(function(t) {
+					$select.append('<option value="' + t.id + '">' + t.name + '</option>');
+				});
+			}
+
+			// --- Category form dropdowns ---
+			function refreshCatParents() {
+				populateParentDropdown($('#cpo-manage-cat-parent'), $('#cpo-manage-cat-taxonomy').val(), '— None (top-level) —');
+			}
+			$('#cpo-manage-cat-taxonomy').on('change', refreshCatParents);
+			refreshCatParents();
+
+			// --- Item form dropdowns ---
+			function refreshItemParents() {
+				populateParentDropdown($('#cpo-manage-item-parent'), $('#cpo-manage-item-taxonomy').val(), '— Select —');
+				populateChildDropdown($('#cpo-manage-item-sub'), $('#cpo-manage-item-taxonomy').val(), '0');
+			}
+			$('#cpo-manage-item-taxonomy').on('change', refreshItemParents);
+			refreshItemParents();
+
+			$('#cpo-manage-item-parent').on('change', function() {
+				populateChildDropdown($('#cpo-manage-item-sub'), $('#cpo-manage-item-taxonomy').val(), $(this).val());
+			});
+
+			// --- Image picker ---
+			$('#cpo-manage-select-img').on('click', function(e) {
+				e.preventDefault();
+				var frame = wp.media({
+					title: 'Select Featured Image',
+					button: { text: 'Use this image' },
+					multiple: false,
+					library: { type: 'image' }
+				});
+				frame.on('select', function() {
+					var attachment = frame.state().get('selection').first().toJSON();
+					var url = (attachment.sizes && attachment.sizes.thumbnail) ? attachment.sizes.thumbnail.url : attachment.url;
+					$('#cpo-manage-img-id').val(attachment.id);
+					$('#cpo-manage-img-preview').html('<img src="' + url + '" alt="">');
+					$('#cpo-manage-remove-img').show();
+				});
+				frame.open();
+			});
+
+			$('#cpo-manage-remove-img').on('click', function() {
+				$('#cpo-manage-img-id').val('');
+				$('#cpo-manage-img-preview').empty();
+				$(this).hide();
+			});
+
+			// --- Create Category ---
+			$('#cpo-create-cat-btn').on('click', function() {
+				var $btn     = $(this);
+				var $spinner = $('#cpo-create-cat-spinner');
+				var $result  = $('#cpo-create-cat-result');
+				var tax      = $('#cpo-manage-cat-taxonomy').val();
+				var parentId = $('#cpo-manage-cat-parent').val();
+				var name     = $('#cpo-manage-cat-name').val().trim();
+
+				if (!name) {
+					$result.html('<p class="cpo-manage-error">Please enter a category name.</p>');
+					return;
+				}
+
+				$btn.prop('disabled', true);
+				$spinner.addClass('is-active');
+				$result.html('');
+
+				$.post(ajaxUrl, {
+					action:    'cpo_create_category',
+					nonce:     nonce,
+					taxonomy:  tax,
+					parent_id: parentId,
+					name:      name
+				}, function(response) {
+					$btn.prop('disabled', false);
+					$spinner.removeClass('is-active');
+
+					if (response.success) {
+						var html = '<p class="cpo-manage-success">' + response.data.message + '</p>';
+						if (response.data.details && response.data.details.length) {
+							html += '<ul class="cpo-manage-details">';
+							response.data.details.forEach(function(d) { html += '<li>' + d + '</li>'; });
+							html += '</ul>';
+						}
+						$result.html(html);
+
+						// Add new term to local data so dropdowns update immediately.
+						if (response.data.term && cpoManageTerms[tax]) {
+							cpoManageTerms[tax].push(response.data.term);
+							refreshCatParents();
+							refreshItemParents();
+						}
+
+						$('#cpo-manage-cat-name').val('');
+					} else {
+						$result.html('<p class="cpo-manage-error">' + (response.data.message || 'Failed.') + '</p>');
+					}
+				}).fail(function() {
+					$btn.prop('disabled', false);
+					$spinner.removeClass('is-active');
+					$result.html('<p class="cpo-manage-error">Request failed. Please try again.</p>');
+				});
+			});
+
+			// --- Create Item ---
+			$('#cpo-create-item-btn').on('click', function() {
+				var $btn     = $(this);
+				var $spinner = $('#cpo-create-item-spinner');
+				var $result  = $('#cpo-create-item-result');
+				var title    = $('#cpo-manage-item-title').val().trim();
+				var imageId  = $('#cpo-manage-img-id').val();
+				var tax      = $('#cpo-manage-item-taxonomy').val();
+				var parentId = $('#cpo-manage-item-parent').val();
+				var subId    = $('#cpo-manage-item-sub').val();
+
+				if (!title) {
+					$result.html('<p class="cpo-manage-error">Please enter a title.</p>');
+					return;
+				}
+
+				$btn.prop('disabled', true);
+				$spinner.addClass('is-active');
+				$result.html('');
+
+				$.post(ajaxUrl, {
+					action:         'cpo_create_item',
+					nonce:          nonce,
+					title:          title,
+					image_id:       imageId || 0,
+					taxonomy:       tax,
+					parent_term_id: parentId || 0,
+					sub_term_id:    subId || 0
+				}, function(response) {
+					$btn.prop('disabled', false);
+					$spinner.removeClass('is-active');
+
+					if (response.success) {
+						$result.html('<p class="cpo-manage-success">' + response.data.message + '</p>');
+						// Reset form.
+						$('#cpo-manage-item-title').val('');
+						$('#cpo-manage-img-id').val('');
+						$('#cpo-manage-img-preview').empty();
+						$('#cpo-manage-remove-img').hide();
+					} else {
+						$result.html('<p class="cpo-manage-error">' + (response.data.message || 'Failed.') + '</p>');
+					}
+				}).fail(function() {
+					$btn.prop('disabled', false);
+					$spinner.removeClass('is-active');
+					$result.html('<p class="cpo-manage-error">Request failed. Please try again.</p>');
+				});
+			});
+		}(jQuery));
+		</script>
+		<?php
 	}
 }

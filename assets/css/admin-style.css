@@ -945,3 +945,71 @@ body.cpo-modal-open {
 .cpo-progress-stats .dashicons-yes-alt  { color: #2a7a2a; }
 .cpo-progress-stats .dashicons-update-alt { color: #2271b1; }
 .cpo-progress-stats .dashicons-minus    { color: #666; }
+
+/* ── Manage Items page ─────────────────────────────────────────────────────── */
+
+.cpo-manage-section {
+	max-width: 700px;
+	margin-top: 24px;
+	background: #fff;
+	border: 1px solid #c3c4c7;
+	border-radius: 4px;
+	padding: 16px 20px 20px;
+}
+
+.cpo-manage-section h2 {
+	margin: 0 0 4px;
+	font-size: 15px;
+	font-weight: 600;
+}
+
+.cpo-manage-form-table {
+	margin-bottom: 0;
+}
+
+.cpo-manage-form-table th {
+	width: 140px;
+	padding: 10px 10px 10px 0;
+	vertical-align: top;
+}
+
+.cpo-manage-form-table td {
+	padding: 10px 0;
+}
+
+.cpo-manage-form-table select,
+.cpo-manage-form-table input[type="text"] {
+	width: 100%;
+	max-width: 360px;
+}
+
+.cpo-manage-img-preview {
+	margin-bottom: 8px;
+}
+
+.cpo-manage-img-preview img {
+	max-width: 150px;
+	max-height: 150px;
+	border: 1px solid #ddd;
+	border-radius: 3px;
+	display: block;
+}
+
+.cpo-manage-success {
+	color: #00a32a;
+	font-weight: 600;
+	margin: 8px 0 4px;
+}
+
+.cpo-manage-error {
+	color: #d63638;
+	font-weight: 600;
+	margin: 8px 0 4px;
+}
+
+.cpo-manage-details {
+	margin: 4px 0 0 16px;
+	list-style: disc;
+	font-size: 13px;
+	color: #3c434a;
+}
