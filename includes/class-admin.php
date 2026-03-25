@@ -1932,6 +1932,19 @@ class CPO_Admin {
 			var nonce   = <?php echo wp_json_encode( wp_create_nonce( 'cpo_sort_nonce' ) ); ?>;
 			var ajaxUrl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
 
+			<?php
+			global $wpdb;
+			$max_title = (int) $wpdb->get_var( $wpdb->prepare(
+				"SELECT MAX(CAST(post_title AS UNSIGNED)) FROM {$wpdb->posts}
+				 WHERE post_type = %s
+				 AND post_status IN ('publish','draft','pending','private')
+				 AND post_title REGEXP '^[0-9]+$'",
+				self::POST_TYPE
+			) );
+			?>
+			var nextItemNumber = <?php echo $max_title + 1; ?>;
+			$('#cpo-manage-item-title').val(nextItemNumber);
+
 			// Embed term data so dropdowns can be populated client-side.
 			var cpoManageTerms = {};
 			<?php
@@ -2119,8 +2132,9 @@ class CPO_Admin {
 
 					if (response.success) {
 						$result.html('<p class="cpo-manage-success">' + response.data.message + '</p>');
-						// Reset form.
-						$('#cpo-manage-item-title').val('');
+						// Reset form — increment title to next number.
+						nextItemNumber++;
+						$('#cpo-manage-item-title').val(nextItemNumber);
 						$('#cpo-manage-img-id').val('');
 						$('#cpo-manage-img-preview').empty();
 						$('#cpo-manage-remove-img').hide();
