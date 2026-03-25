@@ -25,7 +25,6 @@ class CPO_Admin {
 		add_action( 'wp_ajax_cpo_get_sub_cats', array( $this, 'ajax_get_sub_cats' ) );
 		add_action( 'wp_ajax_cpo_save_grid_order', array( $this, 'ajax_save_grid_order' ) );
 		add_action( 'wp_ajax_cpo_get_term_images', array( $this, 'ajax_get_term_images' ) );
-		add_action( 'wp_ajax_cpo_fix_links', array( $this, 'ajax_fix_links' ) );
 		add_action( 'wp_ajax_cpo_create_category', array( $this, 'ajax_create_category' ) );
 		add_action( 'wp_ajax_cpo_create_item', array( $this, 'ajax_create_item' ) );
 		add_action( 'wp_ajax_cpo_search_items', array( $this, 'ajax_search_items' ) );
@@ -372,20 +371,6 @@ class CPO_Admin {
 
 			<div id="cpo-status" class="cpo-status"></div>
 
-			<div class="cpo-fix-links-bar" style="margin:12px 0;padding:10px 14px;background:#fff;border:1px solid #c3c4c7;border-left:4px solid #dba617;">
-				<strong><?php esc_html_e( 'Renamed some URLs?', 'custom-portfolio-ordering' ); ?></strong>
-				<?php esc_html_e( 'Enter old and new slugs below (one per line) to find and replace them across all page content.', 'custom-portfolio-ordering' ); ?>
-				<br><br>
-				<textarea id="cpo-fix-links-input" rows="5" cols="60" style="font-family:monospace;font-size:13px;width:100%;max-width:500px;" placeholder="old-slug = new-slug&#10;venue = venues&#10;the-biltmore = the-arizona-biltmore"></textarea>
-				<br><br>
-				<button type="button" id="cpo-fix-links" class="button button-secondary">
-					<span class="dashicons dashicons-admin-links" style="vertical-align:middle;margin-top:-2px;"></span>
-					<?php esc_html_e( 'Fix Links', 'custom-portfolio-ordering' ); ?>
-				</button>
-				<span id="cpo-fix-links-spinner" class="spinner" style="float:none;vertical-align:middle;"></span>
-				<div id="cpo-fix-links-result" style="margin-top:8px;"></div>
-			</div>
-
 			<div id="cpo-list-wrapper">
 				<p class="cpo-placeholder"><?php esc_html_e( 'Select a taxonomy and category above to load items.', 'custom-portfolio-ordering' ); ?></p>
 			</div>
@@ -418,69 +403,6 @@ class CPO_Admin {
 				echo 'cpoTerms[' . wp_json_encode( $slug ) . '] = ' . wp_json_encode( $term_data ) . ";\n";
 			}
 			?>
-
-			// Fix Links button handler.
-			jQuery(function($){
-				$('#cpo-fix-links').on('click', function(){
-					var $btn     = $(this);
-					var $spinner = $('#cpo-fix-links-spinner');
-					var $result  = $('#cpo-fix-links-result');
-					var raw      = $('#cpo-fix-links-input').val().trim();
-
-					if (!raw) {
-						$result.css('color', '#d63638').html('Please enter at least one <code>old-slug = new-slug</code> pair.');
-						return;
-					}
-
-					// Parse lines into replacements array.
-					var replacements = [];
-					raw.split('\n').forEach(function(line){
-						line = line.trim();
-						if (!line) return;
-						var parts = line.split('=');
-						if (parts.length >= 2) {
-							replacements.push({
-								old_slug: parts[0].trim().replace(/^\//, ''),
-								new_slug: parts.slice(1).join('=').trim().replace(/^\//, '')
-							});
-						}
-					});
-
-					if (!replacements.length) {
-						$result.css('color', '#d63638').html('No valid pairs found. Use the format: <code>old-slug = new-slug</code>');
-						return;
-					}
-
-					$btn.prop('disabled', true);
-					$spinner.addClass('is-active');
-					$result.html('');
-
-					$.post(<?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>, {
-						action:       'cpo_fix_links',
-						nonce:        <?php echo wp_json_encode( wp_create_nonce( 'cpo_sort_nonce' ) ); ?>,
-						replacements: replacements
-					}, function(response){
-						$btn.prop('disabled', false);
-						$spinner.removeClass('is-active');
-
-						if (response.success) {
-							var html = '<strong style="color:#00a32a;">' + response.data.message + '</strong>';
-							if (response.data.details && response.data.details.length) {
-								html += '<ul style="margin:4px 0 0 16px;list-style:disc;">';
-								response.data.details.forEach(function(d){ html += '<li>' + d + '</li>'; });
-								html += '</ul>';
-							}
-							$result.html(html);
-						} else {
-							$result.css('color', '#d63638').text(response.data.message || 'Fix failed.');
-						}
-					}).fail(function(){
-						$btn.prop('disabled', false);
-						$spinner.removeClass('is-active');
-						$result.css('color', '#d63638').text('Request failed. Please try again.');
-					});
-				});
-			});
 		</script>
 		<?php
 	}
@@ -1085,112 +1007,6 @@ class CPO_Admin {
 		}
 
 		wp_send_json_success( array( 'ids' => $attachment_ids ) );
-	}
-
-	/**
-	 * AJAX: Replace old slugs with new slugs across ALL post/page content.
-	 *
-	 * Accepts an array of { old_slug, new_slug } pairs from the client.
-	 * Replaces every occurrence of /old-slug (as a path segment) with /new-slug
-	 * in any post_content that contains it.
-	 */
-	public function ajax_fix_links() {
-		check_ajax_referer( 'cpo_sort_nonce', 'nonce' );
-
-		if ( ! current_user_can( 'edit_posts' ) ) {
-			wp_send_json_error( array( 'message' => 'Permission denied.' ) );
-		}
-
-		$raw_replacements = isset( $_POST['replacements'] ) ? $_POST['replacements'] : array();
-
-		if ( empty( $raw_replacements ) || ! is_array( $raw_replacements ) ) {
-			wp_send_json_error( array( 'message' => 'No replacements provided.' ) );
-		}
-
-		// Sanitize and build the replacement pairs.
-		$pairs = array();
-		foreach ( $raw_replacements as $r ) {
-			$old = isset( $r['old_slug'] ) ? sanitize_title( trim( $r['old_slug'] ) ) : '';
-			$new = isset( $r['new_slug'] ) ? sanitize_title( trim( $r['new_slug'] ) ) : '';
-			if ( $old !== '' && $new !== '' && $old !== $new ) {
-				$pairs[] = array( 'old' => $old, 'new' => $new );
-			}
-		}
-
-		if ( empty( $pairs ) ) {
-			wp_send_json_error( array( 'message' => 'No valid replacement pairs found.' ) );
-		}
-
-		// Build a SQL WHERE clause to find posts containing any of the old slugs.
-		global $wpdb;
-		$like_clauses = array();
-		foreach ( $pairs as $p ) {
-			// phpcs:ignore WordPress.DB.PreparedSQLPlaceholders
-			$like_clauses[] = $wpdb->prepare( 'post_content LIKE %s', '%/' . $wpdb->esc_like( $p['old'] ) . '%' );
-		}
-
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
-		$posts = $wpdb->get_results(
-			"SELECT ID, post_content FROM {$wpdb->posts}
-			 WHERE post_status IN ('publish','draft','private')
-			 AND (" . implode( ' OR ', $like_clauses ) . ')'
-		);
-
-		$fixed       = 0;
-		$details     = array();
-		$total_links = 0;
-
-		foreach ( $posts as $post ) {
-			$content     = $post->post_content;
-			$new_content = $content;
-
-			foreach ( $pairs as $p ) {
-				// Replace /old-slug/ with /new-slug/ (mid-path).
-				$new_content = str_replace( '/' . $p['old'] . '/', '/' . $p['new'] . '/', $new_content );
-				// Replace /old-slug" with /new-slug" (end of quoted attribute).
-				$new_content = str_replace( '/' . $p['old'] . '"', '/' . $p['new'] . '"', $new_content );
-				// Replace /old-slug' with /new-slug' (single-quoted attribute).
-				$new_content = str_replace( '/' . $p['old'] . "'", '/' . $p['new'] . "'", $new_content );
-			}
-
-			if ( $new_content !== $content ) {
-				wp_update_post( array(
-					'ID'           => $post->ID,
-					'post_content' => $new_content,
-				) );
-				$fixed++;
-
-				// Count individual replacements for reporting.
-				foreach ( $pairs as $p ) {
-					$count = substr_count( $content, '/' . $p['old'] . '/' )
-					       + substr_count( $content, '/' . $p['old'] . '"' )
-					       + substr_count( $content, '/' . $p['old'] . "'" );
-					if ( $count > 0 ) {
-						$details[] = sprintf(
-							'Page #%d: /%s &rarr; /%s (%d occurrence%s)',
-							$post->ID,
-							esc_html( $p['old'] ),
-							esc_html( $p['new'] ),
-							$count,
-							$count !== 1 ? 's' : ''
-						);
-						$total_links += $count;
-					}
-				}
-			}
-		}
-
-		if ( $fixed > 0 ) {
-			$message = sprintf( '%d post(s) updated, %d link(s) fixed.', $fixed, $total_links );
-		} else {
-			$message = 'No matches found — the old slugs were not found in any page content.';
-		}
-
-		wp_send_json_success( array(
-			'message' => $message,
-			'fixed'   => $fixed,
-			'details' => $details,
-		) );
 	}
 
 	/**
