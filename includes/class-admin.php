@@ -28,6 +28,8 @@ class CPO_Admin {
 		add_action( 'wp_ajax_cpo_fix_links', array( $this, 'ajax_fix_links' ) );
 		add_action( 'wp_ajax_cpo_create_category', array( $this, 'ajax_create_category' ) );
 		add_action( 'wp_ajax_cpo_create_item', array( $this, 'ajax_create_item' ) );
+		add_action( 'wp_ajax_cpo_search_items', array( $this, 'ajax_search_items' ) );
+		add_action( 'wp_ajax_cpo_update_item', array( $this, 'ajax_update_item' ) );
 	}
 
 	/**
@@ -1811,6 +1813,184 @@ class CPO_Admin {
 	}
 
 	/**
+	 * AJAX: Search portfolio items across all categories.
+	 */
+	public function ajax_search_items() {
+		check_ajax_referer( 'cpo_sort_nonce', 'nonce' );
+
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			wp_send_json_error( array( 'message' => 'Permission denied.' ) );
+		}
+
+		$search   = sanitize_text_field( wp_unslash( $_POST['search'] ?? '' ) );
+		$taxonomy = sanitize_text_field( wp_unslash( $_POST['taxonomy'] ?? '' ) );
+		$term_id  = absint( $_POST['term_id'] ?? 0 );
+		$paged    = max( 1, absint( $_POST['paged'] ?? 1 ) );
+		$per_page = max( 1, min( 100, absint( $_POST['per_page'] ?? 20 ) ) );
+
+		$args = array(
+			'post_type'      => self::POST_TYPE,
+			'post_status'    => array( 'publish', 'draft', 'pending', 'private' ),
+			'posts_per_page' => $per_page,
+			'paged'          => $paged,
+			'orderby'        => 'title',
+			'order'          => 'ASC',
+		);
+
+		if ( $search !== '' ) {
+			$args['s'] = $search;
+		}
+
+		if ( ! empty( $taxonomy ) && $term_id > 0 ) {
+			$args['tax_query'] = array(
+				array(
+					'taxonomy' => $taxonomy,
+					'terms'    => $term_id,
+				),
+			);
+		}
+
+		$query = new WP_Query( $args );
+		$items = array();
+		$tax_slugs = array_keys( $this->get_taxonomies() );
+
+		foreach ( $query->posts as $post ) {
+			$terms_raw = wp_get_object_terms( $post->ID, $tax_slugs );
+			$terms     = array();
+			if ( ! is_wp_error( $terms_raw ) ) {
+				foreach ( $terms_raw as $t ) {
+					$terms[] = array(
+						'id'       => $t->term_id,
+						'name'     => $t->name,
+						'taxonomy' => $t->taxonomy,
+						'parent'   => $t->parent,
+					);
+				}
+			}
+
+			$items[] = array(
+				'id'        => $post->ID,
+				'title'     => $post->post_title,
+				'status'    => $post->post_status,
+				'thumbnail' => get_the_post_thumbnail_url( $post->ID, 'medium' ) ?: get_the_post_thumbnail_url( $post->ID, 'thumbnail' ),
+				'thumb_id'  => (int) get_post_thumbnail_id( $post->ID ),
+				'date'      => $post->post_date,
+				'terms'     => $terms,
+			);
+		}
+
+		wp_send_json_success( array(
+			'items' => $items,
+			'total' => (int) $query->found_posts,
+			'pages' => (int) $query->max_num_pages,
+			'page'  => $paged,
+		) );
+	}
+
+	/**
+	 * AJAX: Update an existing portfolio item.
+	 */
+	public function ajax_update_item() {
+		check_ajax_referer( 'cpo_sort_nonce', 'nonce' );
+
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			wp_send_json_error( array( 'message' => 'Permission denied.' ) );
+		}
+
+		$post_id  = absint( $_POST['post_id'] ?? 0 );
+
+		if ( empty( $post_id ) ) {
+			wp_send_json_error( array( 'message' => 'Missing post ID.' ) );
+		}
+
+		$post = get_post( $post_id );
+		if ( ! $post || $post->post_type !== self::POST_TYPE ) {
+			wp_send_json_error( array( 'message' => 'Invalid portfolio item.' ) );
+		}
+
+		if ( ! current_user_can( 'edit_post', $post_id ) ) {
+			wp_send_json_error( array( 'message' => 'Permission denied for this post.' ) );
+		}
+
+		// Update title.
+		$title = isset( $_POST['title'] ) ? sanitize_text_field( wp_unslash( $_POST['title'] ) ) : '';
+		if ( $title !== '' ) {
+			wp_update_post( array(
+				'ID'         => $post_id,
+				'post_title' => $title,
+			) );
+		}
+
+		// Update featured image.
+		if ( isset( $_POST['image_id'] ) ) {
+			$image_id = absint( $_POST['image_id'] );
+			if ( $image_id > 0 ) {
+				set_post_thumbnail( $post_id, $image_id );
+			} else {
+				delete_post_thumbnail( $post_id );
+			}
+		}
+
+		// Update taxonomy terms.
+		$taxonomy = sanitize_text_field( wp_unslash( $_POST['taxonomy'] ?? '' ) );
+		if ( ! empty( $taxonomy ) && isset( $_POST['term_ids'] ) ) {
+			$term_ids = array_map( 'absint', (array) $_POST['term_ids'] );
+			$term_ids = array_filter( $term_ids );
+
+			// Get old terms to detect changes.
+			$old_terms = wp_get_object_terms( $post_id, $taxonomy, array( 'fields' => 'ids' ) );
+			if ( is_wp_error( $old_terms ) ) {
+				$old_terms = array();
+			}
+
+			wp_set_object_terms( $post_id, $term_ids, $taxonomy );
+
+			// Set ordering meta for newly assigned terms.
+			global $wpdb;
+			$new_terms = array_diff( $term_ids, $old_terms );
+			foreach ( $new_terms as $tid ) {
+				$meta_key  = '_cpo_order_' . $tid;
+				$max_order = $wpdb->get_var( $wpdb->prepare(
+					"SELECT MAX(CAST(meta_value AS UNSIGNED)) FROM {$wpdb->postmeta} WHERE meta_key = %s",
+					$meta_key
+				) );
+				$new_order = ( $max_order !== null ) ? ( (int) $max_order + 1 ) : 0;
+				update_post_meta( $post_id, $meta_key, $new_order );
+				update_option( 'cpo_ordered_term_' . $tid, true );
+			}
+		}
+
+		// Return updated item data.
+		$post      = get_post( $post_id );
+		$tax_slugs = array_keys( $this->get_taxonomies() );
+		$terms_raw = wp_get_object_terms( $post_id, $tax_slugs );
+		$terms     = array();
+		if ( ! is_wp_error( $terms_raw ) ) {
+			foreach ( $terms_raw as $t ) {
+				$terms[] = array(
+					'id'       => $t->term_id,
+					'name'     => $t->name,
+					'taxonomy' => $t->taxonomy,
+					'parent'   => $t->parent,
+				);
+			}
+		}
+
+		wp_send_json_success( array(
+			'message' => sprintf( 'Item "%s" updated successfully.', $post->post_title ),
+			'item'    => array(
+				'id'        => $post->ID,
+				'title'     => $post->post_title,
+				'status'    => $post->post_status,
+				'thumbnail' => get_the_post_thumbnail_url( $post->ID, 'medium' ) ?: get_the_post_thumbnail_url( $post->ID, 'thumbnail' ),
+				'thumb_id'  => (int) get_post_thumbnail_id( $post->ID ),
+				'date'      => $post->post_date,
+				'terms'     => $terms,
+			),
+		) );
+	}
+
+	/**
 	 * Render the Manage Items admin page.
 	 */
 	public function render_manage_page() {
@@ -1916,6 +2096,38 @@ class CPO_Admin {
 					<span id="cpo-create-item-spinner" class="spinner" style="float:none;vertical-align:middle;"></span>
 				</p>
 				<div id="cpo-create-item-result"></div>
+			</div>
+
+			<!-- Edit Portfolio Items Section -->
+			<div class="cpo-manage-section cpo-manage-section-wide">
+				<h2><?php esc_html_e( 'Edit Portfolio Items', 'custom-portfolio-ordering' ); ?></h2>
+				<p class="description"><?php esc_html_e( 'Search and edit existing portfolio items.', 'custom-portfolio-ordering' ); ?></p>
+
+				<div class="cpo-edit-search-bar">
+					<input type="text" id="cpo-edit-search" placeholder="<?php esc_attr_e( 'Search by title...', 'custom-portfolio-ordering' ); ?>">
+					<select id="cpo-edit-tax-filter">
+						<?php foreach ( $taxonomies as $slug => $tax ) : ?>
+							<option value="<?php echo esc_attr( $slug ); ?>"><?php echo esc_html( $tax->labels->name ); ?></option>
+						<?php endforeach; ?>
+					</select>
+					<select id="cpo-edit-cat-filter">
+						<option value="0"><?php esc_html_e( '— All categories —', 'custom-portfolio-ordering' ); ?></option>
+					</select>
+					<button type="button" class="button" id="cpo-edit-search-btn">
+						<span class="dashicons dashicons-search" style="vertical-align:middle;margin-right:2px;"></span><?php esc_html_e( 'Search', 'custom-portfolio-ordering' ); ?>
+					</button>
+					<span id="cpo-edit-search-spinner" class="spinner" style="float:none;vertical-align:middle;"></span>
+				</div>
+
+				<div id="cpo-edit-results">
+					<p class="cpo-placeholder"><?php esc_html_e( 'Use the search bar above to find items, or click Search to list all.', 'custom-portfolio-ordering' ); ?></p>
+				</div>
+
+				<div id="cpo-edit-pagination" class="cpo-edit-pagination" style="display:none;">
+					<button type="button" class="button" id="cpo-edit-prev">&laquo; <?php esc_html_e( 'Previous', 'custom-portfolio-ordering' ); ?></button>
+					<span id="cpo-edit-page-info"></span>
+					<button type="button" class="button" id="cpo-edit-next"><?php esc_html_e( 'Next', 'custom-portfolio-ordering' ); ?> &raquo;</button>
+				</div>
 			</div>
 		</div>
 
@@ -2125,6 +2337,364 @@ class CPO_Admin {
 					$result.html('<p class="cpo-manage-error">Request failed. Please try again.</p>');
 				});
 			});
+			// ── Edit Portfolio Items ──────────────────────────────────────────────
+
+			var editItemsCache = {};
+			var editCurrentPage = 1;
+			var editTotalPages  = 1;
+
+			function escHtml(str) {
+				return $('<div>').text(String(str)).html();
+			}
+
+			// Populate the category filter dropdown (all terms, indented).
+			function refreshEditCatFilter() {
+				var tax = $('#cpo-edit-tax-filter').val();
+				var $sel = $('#cpo-edit-cat-filter');
+				$sel.empty().append('<option value="0">&mdash; All categories &mdash;</option>');
+				if (!cpoManageTerms[tax]) return;
+
+				// Build flat indented list.
+				var terms = cpoManageTerms[tax];
+				var parents = terms.filter(function(t) { return t.parent === 0; });
+				parents.forEach(function(p) {
+					$sel.append('<option value="' + p.id + '">' + p.name + '</option>');
+					terms.filter(function(c) { return c.parent === p.id; }).forEach(function(c) {
+						$sel.append('<option value="' + c.id + '">\u00A0\u00A0\u00A0' + c.name + '</option>');
+					});
+				});
+			}
+
+			$('#cpo-edit-tax-filter').on('change', refreshEditCatFilter);
+			refreshEditCatFilter();
+
+			// Format terms for display: "Parent > Child".
+			function formatTerms(terms) {
+				if (!terms || !terms.length) return '<em>None</em>';
+				var parentMap = {};
+				var children  = [];
+				terms.forEach(function(t) {
+					if (t.parent === 0) {
+						parentMap[t.id] = t.name;
+					} else {
+						children.push(t);
+					}
+				});
+				// Pair children with parents.
+				var parts = [];
+				children.forEach(function(c) {
+					var pName = parentMap[c.parent] || '';
+					parts.push(pName ? (escHtml(pName) + ' &rsaquo; ' + escHtml(c.name)) : escHtml(c.name));
+				});
+				// Show orphan parents (no children matched).
+				terms.forEach(function(t) {
+					if (t.parent === 0 && !children.some(function(c) { return c.parent === t.id; })) {
+						parts.push(escHtml(t.name));
+					}
+				});
+				return parts.join(', ') || '<em>None</em>';
+			}
+
+			function cpoEditSearch(page) {
+				var search  = $('#cpo-edit-search').val().trim();
+				var tax     = $('#cpo-edit-tax-filter').val();
+				var termId  = $('#cpo-edit-cat-filter').val();
+				var $spin   = $('#cpo-edit-search-spinner');
+
+				$spin.addClass('is-active');
+				$('#cpo-edit-results').html('<p class="cpo-placeholder">Loading&hellip;</p>');
+				$('#cpo-edit-pagination').hide();
+
+				$.post(ajaxUrl, {
+					action:   'cpo_search_items',
+					nonce:    nonce,
+					search:   search,
+					taxonomy: tax,
+					term_id:  termId || 0,
+					paged:    page || 1
+				}, function(response) {
+					$spin.removeClass('is-active');
+					if (!response.success) {
+						$('#cpo-edit-results').html('<p class="cpo-manage-error">' + (response.data.message || 'Search failed.') + '</p>');
+						return;
+					}
+					editCurrentPage = response.data.page;
+					editTotalPages  = response.data.pages;
+					renderEditTable(response.data);
+				}).fail(function() {
+					$spin.removeClass('is-active');
+					$('#cpo-edit-results').html('<p class="cpo-manage-error">Request failed. Please try again.</p>');
+				});
+			}
+
+			function renderEditTable(data) {
+				if (!data.items.length) {
+					$('#cpo-edit-results').html('<p class="cpo-placeholder">No items found.</p>');
+					$('#cpo-edit-pagination').hide();
+					return;
+				}
+
+				// Cache items for edit forms.
+				editItemsCache = {};
+				data.items.forEach(function(item) {
+					editItemsCache[item.id] = item;
+				});
+
+				var html = '<div class="cpo-list-header">';
+				html += '<span class="cpo-col-thumb"></span>';
+				html += '<span class="cpo-col-title">Title</span>';
+				html += '<span class="cpo-col-categories">Categories</span>';
+				html += '<span class="cpo-col-status">Status</span>';
+				html += '<span class="cpo-col-actions-wide">Actions</span>';
+				html += '</div>';
+				html += '<ul class="cpo-edit-list">';
+
+				data.items.forEach(function(item) {
+					var thumb = item.thumbnail
+						? '<img src="' + item.thumbnail + '" alt="">'
+						: '<span class="cpo-no-thumb dashicons dashicons-format-image"></span>';
+
+					html += '<li class="cpo-item cpo-edit-item" data-id="' + item.id + '">';
+					html += '<span class="cpo-col-thumb">' + thumb + '</span>';
+					html += '<span class="cpo-col-title">' + escHtml(item.title) + '</span>';
+					html += '<span class="cpo-col-categories">' + formatTerms(item.terms) + '</span>';
+					html += '<span class="cpo-col-status"><span class="cpo-status-badge cpo-status-' + item.status + '">' + item.status + '</span></span>';
+					html += '<span class="cpo-col-actions-wide">';
+					html += '<button type="button" class="cpo-edit-btn" data-id="' + item.id + '" title="Edit"><span class="dashicons dashicons-edit"></span></button>';
+					html += '<button type="button" class="cpo-delete-btn cpo-edit-delete-btn" data-id="' + item.id + '" title="Move to trash"><span class="dashicons dashicons-trash"></span></button>';
+					html += '</span>';
+					html += '</li>';
+				});
+
+				html += '</ul>';
+				$('#cpo-edit-results').html(html);
+
+				// Pagination.
+				if (editTotalPages > 1) {
+					$('#cpo-edit-page-info').text('Page ' + editCurrentPage + ' of ' + editTotalPages + ' (' + data.total + ' items)');
+					$('#cpo-edit-prev').prop('disabled', editCurrentPage <= 1);
+					$('#cpo-edit-next').prop('disabled', editCurrentPage >= editTotalPages);
+					$('#cpo-edit-pagination').show();
+				} else {
+					$('#cpo-edit-pagination').hide();
+				}
+			}
+
+			function openEditForm(postId) {
+				// Close any existing edit form.
+				$('.cpo-edit-form-row').remove();
+				$('.cpo-edit-item').removeClass('cpo-edit-item-active');
+
+				var item = editItemsCache[postId];
+				if (!item) return;
+
+				var $row = $('.cpo-edit-item[data-id="' + postId + '"]');
+				$row.addClass('cpo-edit-item-active');
+
+				var tax = $('#cpo-edit-tax-filter').val();
+
+				// Find current parent and sub-category for this item.
+				var currentParent = 0;
+				var currentSub    = 0;
+				if (item.terms && item.terms.length) {
+					item.terms.forEach(function(t) {
+						if (t.parent === 0) currentParent = t.id;
+						else currentSub = t.id;
+					});
+				}
+
+				// Build parent options.
+				var parentOpts = '<option value="0">&mdash; None &mdash;</option>';
+				getParentTerms(tax).forEach(function(t) {
+					parentOpts += '<option value="' + t.id + '"' + (t.id === currentParent ? ' selected' : '') + '>' + escHtml(t.name) + '</option>';
+				});
+
+				// Build sub-category options.
+				var subOpts = '<option value="0">&mdash; None &mdash;</option>';
+				if (currentParent) {
+					getChildTerms(tax, currentParent).forEach(function(t) {
+						subOpts += '<option value="' + t.id + '"' + (t.id === currentSub ? ' selected' : '') + '>' + escHtml(t.name) + '</option>';
+					});
+				}
+
+				var imgPreview = '';
+				if (item.thumbnail) {
+					imgPreview = '<img src="' + item.thumbnail + '" alt="">';
+				}
+
+				var formHtml = '<li class="cpo-edit-form-row" data-id="' + postId + '">';
+				formHtml += '<div class="cpo-edit-inline">';
+				formHtml += '<table class="form-table cpo-manage-form-table">';
+				formHtml += '<tr><th>Title</th><td><input type="text" class="cpo-edit-field-title regular-text" value="' + escHtml(item.title) + '"></td></tr>';
+				formHtml += '<tr><th>Featured Image</th><td>';
+				formHtml += '<div class="cpo-manage-img-preview cpo-edit-img-preview">' + imgPreview + '</div>';
+				formHtml += '<input type="hidden" class="cpo-edit-field-img-id" value="' + (item.thumb_id || '') + '">';
+				formHtml += '<button type="button" class="button cpo-edit-select-img"><span class="dashicons dashicons-format-image" style="vertical-align:middle;margin-right:4px;"></span>Select Image</button> ';
+				formHtml += '<button type="button" class="button cpo-edit-remove-img"' + (!item.thumb_id ? ' style="display:none;"' : '') + '><span class="dashicons dashicons-no" style="vertical-align:middle;margin-right:2px;"></span>Remove</button>';
+				formHtml += '</td></tr>';
+				formHtml += '<tr><th>Parent Category</th><td><select class="cpo-edit-field-parent">' + parentOpts + '</select></td></tr>';
+				formHtml += '<tr><th>Sub-Category</th><td><select class="cpo-edit-field-sub">' + subOpts + '</select></td></tr>';
+				formHtml += '</table>';
+				formHtml += '<div class="cpo-edit-actions">';
+				formHtml += '<button type="button" class="button button-primary cpo-edit-save-btn" data-id="' + postId + '">Save Changes</button>';
+				formHtml += '<button type="button" class="button cpo-edit-cancel-btn">Cancel</button>';
+				formHtml += '<span class="cpo-edit-save-spinner spinner" style="float:none;vertical-align:middle;"></span>';
+				formHtml += '</div>';
+				formHtml += '<div class="cpo-edit-form-result"></div>';
+				formHtml += '</div>';
+				formHtml += '</li>';
+
+				$row.after(formHtml);
+
+				// Wire up parent → sub cascading within the edit form.
+				var $formRow = $row.next('.cpo-edit-form-row');
+				$formRow.find('.cpo-edit-field-parent').on('change', function() {
+					var pid = $(this).val();
+					var $sub = $formRow.find('.cpo-edit-field-sub');
+					$sub.empty().append('<option value="0">&mdash; None &mdash;</option>');
+					if (pid && pid !== '0') {
+						getChildTerms(tax, pid).forEach(function(t) {
+							$sub.append('<option value="' + t.id + '">' + escHtml(t.name) + '</option>');
+						});
+					}
+				});
+			}
+
+			function saveEditItem(postId) {
+				var $formRow = $('.cpo-edit-form-row[data-id="' + postId + '"]');
+				var $spinner = $formRow.find('.cpo-edit-save-spinner');
+				var $result  = $formRow.find('.cpo-edit-form-result');
+				var $saveBtn = $formRow.find('.cpo-edit-save-btn');
+
+				var title    = $formRow.find('.cpo-edit-field-title').val().trim();
+				var imageId  = $formRow.find('.cpo-edit-field-img-id').val();
+				var parentId = parseInt($formRow.find('.cpo-edit-field-parent').val(), 10) || 0;
+				var subId    = parseInt($formRow.find('.cpo-edit-field-sub').val(), 10) || 0;
+				var tax      = $('#cpo-edit-tax-filter').val();
+
+				if (!title) {
+					$result.html('<p class="cpo-manage-error">Title cannot be empty.</p>');
+					return;
+				}
+
+				var termIds = [];
+				if (parentId) termIds.push(parentId);
+				if (subId)    termIds.push(subId);
+
+				$saveBtn.prop('disabled', true);
+				$spinner.addClass('is-active');
+				$result.html('');
+
+				$.post(ajaxUrl, {
+					action:   'cpo_update_item',
+					nonce:    nonce,
+					post_id:  postId,
+					title:    title,
+					image_id: imageId || 0,
+					taxonomy: tax,
+					term_ids: termIds
+				}, function(response) {
+					$saveBtn.prop('disabled', false);
+					$spinner.removeClass('is-active');
+
+					if (response.success) {
+						// Update cache and table row.
+						var updated = response.data.item;
+						editItemsCache[postId] = updated;
+
+						var $row = $('.cpo-edit-item[data-id="' + postId + '"]');
+						var thumb = updated.thumbnail
+							? '<img src="' + updated.thumbnail + '" alt="">'
+							: '<span class="cpo-no-thumb dashicons dashicons-format-image"></span>';
+						$row.find('.cpo-col-thumb').html(thumb);
+						$row.find('.cpo-col-title').text(updated.title);
+						$row.find('.cpo-col-categories').html(formatTerms(updated.terms));
+
+						$result.html('<p class="cpo-manage-success">' + escHtml(response.data.message) + '</p>');
+						setTimeout(function() {
+							$('.cpo-edit-form-row').remove();
+							$('.cpo-edit-item').removeClass('cpo-edit-item-active');
+						}, 1000);
+					} else {
+						$result.html('<p class="cpo-manage-error">' + escHtml(response.data.message || 'Update failed.') + '</p>');
+					}
+				}).fail(function() {
+					$saveBtn.prop('disabled', false);
+					$spinner.removeClass('is-active');
+					$result.html('<p class="cpo-manage-error">Request failed. Please try again.</p>');
+				});
+			}
+
+			// Event bindings (delegated).
+			$('#cpo-edit-search-btn').on('click', function() { cpoEditSearch(1); });
+			$('#cpo-edit-search').on('keypress', function(e) { if (e.which === 13) { e.preventDefault(); cpoEditSearch(1); } });
+			$('#cpo-edit-prev').on('click', function() { if (editCurrentPage > 1) cpoEditSearch(editCurrentPage - 1); });
+			$('#cpo-edit-next').on('click', function() { if (editCurrentPage < editTotalPages) cpoEditSearch(editCurrentPage + 1); });
+
+			// Edit button.
+			$('#cpo-edit-results').on('click', '.cpo-edit-btn', function() {
+				openEditForm($(this).data('id'));
+			});
+
+			// Cancel button.
+			$('#cpo-edit-results').on('click', '.cpo-edit-cancel-btn', function() {
+				$('.cpo-edit-form-row').remove();
+				$('.cpo-edit-item').removeClass('cpo-edit-item-active');
+			});
+
+			// Save button.
+			$('#cpo-edit-results').on('click', '.cpo-edit-save-btn', function() {
+				saveEditItem($(this).data('id'));
+			});
+
+			// Image picker within edit form.
+			$('#cpo-edit-results').on('click', '.cpo-edit-select-img', function() {
+				var $formRow = $(this).closest('.cpo-edit-form-row');
+				var frame = wp.media({
+					title: 'Select Featured Image',
+					button: { text: 'Use this image' },
+					multiple: false,
+					library: { type: 'image' }
+				});
+				frame.on('select', function() {
+					var attachment = frame.state().get('selection').first().toJSON();
+					var url = (attachment.sizes && attachment.sizes.thumbnail) ? attachment.sizes.thumbnail.url : attachment.url;
+					$formRow.find('.cpo-edit-field-img-id').val(attachment.id);
+					$formRow.find('.cpo-edit-img-preview').html('<img src="' + url + '" alt="">');
+					$formRow.find('.cpo-edit-remove-img').show();
+				});
+				frame.open();
+			});
+
+			// Remove image within edit form.
+			$('#cpo-edit-results').on('click', '.cpo-edit-remove-img', function() {
+				var $formRow = $(this).closest('.cpo-edit-form-row');
+				$formRow.find('.cpo-edit-field-img-id').val('0');
+				$formRow.find('.cpo-edit-img-preview').empty();
+				$(this).hide();
+			});
+
+			// Delete from edit table.
+			$('#cpo-edit-results').on('click', '.cpo-edit-delete-btn', function() {
+				var postId = $(this).data('id');
+				var item   = editItemsCache[postId];
+				if (!confirm('Move "' + (item ? item.title : '#' + postId) + '" to trash?')) return;
+
+				$.post(ajaxUrl, {
+					action:  'cpo_delete_item',
+					nonce:   nonce,
+					post_id: postId
+				}, function(response) {
+					if (response.success) {
+						$('.cpo-edit-form-row[data-id="' + postId + '"]').remove();
+						$('.cpo-edit-item[data-id="' + postId + '"]').fadeOut(300, function() { $(this).remove(); });
+						delete editItemsCache[postId];
+					} else {
+						alert(response.data.message || 'Delete failed.');
+					}
+				});
+			});
+
 		}(jQuery));
 		</script>
 		<?php
