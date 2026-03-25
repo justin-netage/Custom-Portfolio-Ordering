@@ -2296,6 +2296,33 @@ class CPO_Admin {
 				}
 			}
 
+			function buildCategoryCheckboxes(tax, checkedIds) {
+				var html = '<div class="cpo-edit-cat-tree">';
+				var parents = getParentTerms(tax);
+				if (!parents.length) {
+					html += '<em>No categories found.</em>';
+					html += '</div>';
+					return html;
+				}
+				parents.forEach(function(p) {
+					var pChecked = checkedIds.indexOf(p.id) !== -1 ? ' checked' : '';
+					html += '<div class="cpo-edit-cat-group">';
+					html += '<label class="cpo-edit-cat-parent-label"><input type="checkbox" value="' + p.id + '"' + pChecked + '> <strong>' + escHtml(p.name) + '</strong></label>';
+					var children = getChildTerms(tax, p.id);
+					if (children.length) {
+						html += '<div class="cpo-edit-cat-children">';
+						children.forEach(function(c) {
+							var cChecked = checkedIds.indexOf(c.id) !== -1 ? ' checked' : '';
+							html += '<label><input type="checkbox" value="' + c.id + '"' + cChecked + '> ' + escHtml(c.name) + '</label>';
+						});
+						html += '</div>';
+					}
+					html += '</div>';
+				});
+				html += '</div>';
+				return html;
+			}
+
 			function openEditForm(postId) {
 				// Close any existing edit form.
 				$('.cpo-edit-form-row').remove();
@@ -2309,28 +2336,10 @@ class CPO_Admin {
 
 				var tax = $('#cpo-edit-tax-filter').val();
 
-				// Find current parent and sub-category for this item.
-				var currentParent = 0;
-				var currentSub    = 0;
+				// Build set of currently assigned term IDs.
+				var checkedIds = [];
 				if (item.terms && item.terms.length) {
-					item.terms.forEach(function(t) {
-						if (t.parent === 0) currentParent = t.id;
-						else currentSub = t.id;
-					});
-				}
-
-				// Build parent options.
-				var parentOpts = '<option value="0">&mdash; None &mdash;</option>';
-				getParentTerms(tax).forEach(function(t) {
-					parentOpts += '<option value="' + t.id + '"' + (t.id === currentParent ? ' selected' : '') + '>' + escHtml(t.name) + '</option>';
-				});
-
-				// Build sub-category options.
-				var subOpts = '<option value="0">&mdash; None &mdash;</option>';
-				if (currentParent) {
-					getChildTerms(tax, currentParent).forEach(function(t) {
-						subOpts += '<option value="' + t.id + '"' + (t.id === currentSub ? ' selected' : '') + '>' + escHtml(t.name) + '</option>';
-					});
+					item.terms.forEach(function(t) { checkedIds.push(t.id); });
 				}
 
 				var imgPreview = '';
@@ -2348,8 +2357,7 @@ class CPO_Admin {
 				formHtml += '<button type="button" class="button cpo-edit-select-img"><span class="dashicons dashicons-format-image" style="vertical-align:middle;margin-right:4px;"></span>Select Image</button> ';
 				formHtml += '<button type="button" class="button cpo-edit-remove-img"' + (!item.thumb_id ? ' style="display:none;"' : '') + '><span class="dashicons dashicons-no" style="vertical-align:middle;margin-right:2px;"></span>Remove</button>';
 				formHtml += '</td></tr>';
-				formHtml += '<tr><th>Parent Category</th><td><select class="cpo-edit-field-parent">' + parentOpts + '</select></td></tr>';
-				formHtml += '<tr><th>Sub-Category</th><td><select class="cpo-edit-field-sub">' + subOpts + '</select></td></tr>';
+				formHtml += '<tr><th>Categories</th><td>' + buildCategoryCheckboxes(tax, checkedIds) + '</td></tr>';
 				formHtml += '</table>';
 				formHtml += '<div class="cpo-edit-actions">';
 				formHtml += '<button type="button" class="button button-primary cpo-edit-save-btn" data-id="' + postId + '">Save Changes</button>';
@@ -2361,19 +2369,6 @@ class CPO_Admin {
 				formHtml += '</li>';
 
 				$row.after(formHtml);
-
-				// Wire up parent → sub cascading within the edit form.
-				var $formRow = $row.next('.cpo-edit-form-row');
-				$formRow.find('.cpo-edit-field-parent').on('change', function() {
-					var pid = $(this).val();
-					var $sub = $formRow.find('.cpo-edit-field-sub');
-					$sub.empty().append('<option value="0">&mdash; None &mdash;</option>');
-					if (pid && pid !== '0') {
-						getChildTerms(tax, pid).forEach(function(t) {
-							$sub.append('<option value="' + t.id + '">' + escHtml(t.name) + '</option>');
-						});
-					}
-				});
 			}
 
 			function saveEditItem(postId) {
@@ -2384,8 +2379,6 @@ class CPO_Admin {
 
 				var title    = $formRow.find('.cpo-edit-field-title').val().trim();
 				var imageId  = $formRow.find('.cpo-edit-field-img-id').val();
-				var parentId = parseInt($formRow.find('.cpo-edit-field-parent').val(), 10) || 0;
-				var subId    = parseInt($formRow.find('.cpo-edit-field-sub').val(), 10) || 0;
 				var tax      = $('#cpo-edit-tax-filter').val();
 
 				if (!title) {
@@ -2393,9 +2386,12 @@ class CPO_Admin {
 					return;
 				}
 
+				// Collect all checked category checkboxes.
 				var termIds = [];
-				if (parentId) termIds.push(parentId);
-				if (subId)    termIds.push(subId);
+				$formRow.find('.cpo-edit-cat-tree input:checked').each(function() {
+					var val = parseInt($(this).val(), 10);
+					if (val && termIds.indexOf(val) === -1) termIds.push(val);
+				});
 
 				$saveBtn.prop('disabled', true);
 				$spinner.addClass('is-active');
