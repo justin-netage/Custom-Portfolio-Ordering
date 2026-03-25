@@ -2184,6 +2184,12 @@ class CPO_Admin {
 			$('#cpo-edit-tax-filter').on('change', refreshEditCatFilter);
 			refreshEditCatFilter();
 
+			// Auto-select first category and load items on page load.
+			if ($('#cpo-edit-cat-filter option').length > 1) {
+				$('#cpo-edit-cat-filter').val($('#cpo-edit-cat-filter option').eq(1).val());
+			}
+			cpoEditSearch(1);
+
 			// Format terms for display: "Parent > Child".
 			function formatTerms(terms) {
 				if (!terms || !terms.length) return '<em>None</em>';
