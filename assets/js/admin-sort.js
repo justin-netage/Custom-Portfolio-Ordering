@@ -211,6 +211,7 @@
 		html += '<span class="cpo-col-order">#</span>';
 		html += '<span class="cpo-col-thumb"></span>';
 		html += '<span class="cpo-col-title">Title</span>';
+		html += '<span class="cpo-col-date">Published</span>';
 		html += '<span class="cpo-col-status">Status</span>';
 		html += '<span class="cpo-col-actions"></span>';
 		html += '</div>';
@@ -229,6 +230,7 @@
 			html += '<span class="cpo-col-order' + (isLatest ? '' : ' cpo-handle') + '">' + handleInner + '</span>';
 			html += '<span class="cpo-col-thumb">' + thumb + '</span>';
 			html += '<span class="cpo-col-title">' + escHtml(item.title) + '</span>';
+			html += '<span class="cpo-col-date">' + escHtml(formatDate(item.date)) + '</span>';
 			html += '<span class="cpo-col-status"><span class="cpo-status-badge cpo-status-' + item.status + '">' + item.status + '</span></span>';
 			html += '<span class="cpo-col-actions"><button type="button" class="cpo-delete-btn" data-id="' + item.id + '" title="Move to trash"><span class="dashicons dashicons-trash"></span></button></span>';
 			html += '</li>';
@@ -259,6 +261,29 @@
 		var div = document.createElement('div');
 		div.appendChild(document.createTextNode(str));
 		return div.innerHTML;
+	}
+
+	/**
+	 * Format a "YYYY-MM-DD HH:MM:SS" post date as a short, readable string
+	 * (e.g. "6 Jul 2026"). Returns an em dash when no date is available.
+	 */
+	function formatDate(raw) {
+		if (!raw) {
+			return '—';
+		}
+
+		// Parse the leading date part directly to avoid timezone shifts.
+		var m = String(raw).match(/^(\d{4})-(\d{2})-(\d{2})/);
+		if (!m) {
+			return '—';
+		}
+
+		var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+		var year   = m[1];
+		var month  = months[parseInt(m[2], 10) - 1] || m[2];
+		var day    = parseInt(m[3], 10);
+
+		return day + ' ' + month + ' ' + year;
 	}
 
 	/**

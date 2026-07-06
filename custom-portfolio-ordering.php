@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Custom Portfolio Ordering
  * Description: Drag-and-drop custom ordering for portfolio items by category/taxonomy term. Order is applied site-wide.
- * Version: 1.2.0
+ * Version: 1.2.1
  * Author: Justin Netage
  * Text Domain: custom-portfolio-ordering
  */
@@ -14,7 +14,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 define( 'CPO_PLUGIN_FILE', __FILE__ );
 define( 'CPO_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'CPO_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
-define( 'CPO_VERSION', '1.2.0' );
+define( 'CPO_VERSION', '1.2.1' );
 
 require_once CPO_PLUGIN_DIR . 'includes/class-admin.php';
 require_once CPO_PLUGIN_DIR . 'includes/class-frontend.php';
