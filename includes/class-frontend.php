@@ -104,6 +104,26 @@ class CPO_Frontend {
 	}
 
 	/**
+	 * Resolve the effective ordering mode for a term.
+	 *
+	 * Returns 'latest' when the term (or the site-wide default) is set to
+	 * order everything by publish date, otherwise 'custom'.
+	 *
+	 * @param int $term_id The term ID.
+	 * @return string 'latest' or 'custom'.
+	 */
+	public static function get_order_mode( $term_id ) {
+		$mode = get_option( 'cpo_order_mode_' . intval( $term_id ), '' );
+
+		if ( 'latest' === $mode || 'custom' === $mode ) {
+			return $mode;
+		}
+
+		// Fall back to the site-wide default.
+		return 'latest' === get_option( 'cpo_global_order_mode', 'custom' ) ? 'latest' : 'custom';
+	}
+
+	/**
 	 * Flag portfolio queries that have a custom order so we can
 	 * modify the SQL clauses in the next filter.
 	 *
@@ -130,19 +150,32 @@ class CPO_Frontend {
 			return;
 		}
 
-		// Check if this term has been ordered.
+		$mode = self::get_order_mode( $term_id );
+
+		// "Latest" mode orders purely by date and needs no saved custom order.
+		if ( 'latest' === $mode ) {
+			$query->set( 'cpo_term_id', $term_id );
+			$query->set( 'cpo_order_mode', 'latest' );
+			return;
+		}
+
+		// Custom mode: only apply once this term has been ordered.
 		if ( ! get_option( 'cpo_ordered_term_' . $term_id ) ) {
 			return;
 		}
 
 		// Store the term_id on the query so the clauses filter can use it.
 		$query->set( 'cpo_term_id', $term_id );
+		$query->set( 'cpo_order_mode', 'custom' );
 	}
 
 	/**
-	 * Modify SQL clauses to order by the custom meta value.
+	 * Modify SQL clauses to apply the selected ordering.
 	 *
-	 * Uses a LEFT JOIN so items without a saved order appear at the end.
+	 * In "custom" mode, items are ordered by their saved order value, but any
+	 * items without a saved order (newly added entries) float to the top,
+	 * newest first, so the latest work always leads regardless of the custom
+	 * order beneath it. In "latest" mode, every item is ordered by date.
 	 *
 	 * @param array    $clauses SQL clauses.
 	 * @param WP_Query $query   The query.
@@ -161,15 +194,23 @@ class CPO_Frontend {
 
 		global $wpdb;
 
+		// Latest mode: order everything by publish date, newest first.
+		if ( 'latest' === $query->get( 'cpo_order_mode' ) ) {
+			$clauses['orderby'] = "{$wpdb->posts}.post_date DESC, {$wpdb->posts}.post_title ASC";
+			return $clauses;
+		}
+
 		$meta_key = '_cpo_order_' . intval( $term_id );
 
-		// LEFT JOIN to get the order meta, with NULL (unordered) items sorted to the end.
+		// LEFT JOIN to get the order meta. Items without a saved order (NULL)
+		// are the latest additions and sort to the TOP, newest first; ordered
+		// items follow in their saved sequence.
 		$clauses['join'] .= $wpdb->prepare(
 			" LEFT JOIN {$wpdb->postmeta} AS cpo_meta ON ({$wpdb->posts}.ID = cpo_meta.post_id AND cpo_meta.meta_key = %s)",
 			$meta_key
 		);
 
-		$clauses['orderby'] = "CASE WHEN cpo_meta.meta_value IS NULL THEN 1 ELSE 0 END ASC, CAST(cpo_meta.meta_value AS UNSIGNED) ASC, {$wpdb->posts}.post_title ASC";
+		$clauses['orderby'] = "CASE WHEN cpo_meta.meta_value IS NULL THEN 0 ELSE 1 END ASC, CAST(cpo_meta.meta_value AS UNSIGNED) ASC, {$wpdb->posts}.post_date DESC, {$wpdb->posts}.post_title ASC";
 
 		return $clauses;
 	}
