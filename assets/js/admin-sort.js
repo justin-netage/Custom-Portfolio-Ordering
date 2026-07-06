@@ -9,6 +9,7 @@
 	var currentTerm      = null;
 	var currentTax       = null;
 	var currentItems     = [];
+	var currentOrderMode = 'custom'; // 'custom' or 'latest' for the selected term
 	var gridImageChanges = {}; // term_id → new attachment ID, pending save
 
 	/**
@@ -168,6 +169,7 @@
 				}
 
 				var items = response.data.items;
+				currentOrderMode = response.data.order_mode || 'custom';
 
 				if (!items.length) {
 					$wrapper.html('<p class="cpo-placeholder">No portfolio items found in this category.</p>');
@@ -190,22 +192,41 @@
 	 * Render the sortable list.
 	 */
 	function renderList(items) {
-		var html = '<div class="cpo-list-header">';
+		var isLatest = (currentOrderMode === 'latest');
+
+		var html = '';
+
+		// Per-category ordering mode toggle.
+		html += '<div class="cpo-mode-toggle">';
+		html += '<label><input type="checkbox" id="cpo-latest-toggle"' + (isLatest ? ' checked' : '') + ' /> Order this category by latest (newest first)</label>';
+		html += '<span class="description">Overrides the manual order below with automatic date ordering.</span>';
+		html += '<span id="cpo-mode-spinner" class="spinner" style="float:none;"></span>';
+		html += '</div>';
+
+		if (isLatest) {
+			html += '<div class="cpo-notice cpo-notice-info"><span class="dashicons dashicons-info"></span> This category is ordered automatically by publish date, newest first. Uncheck the option above to arrange items manually.</div>';
+		}
+
+		html += '<div class="cpo-list-header">';
 		html += '<span class="cpo-col-order">#</span>';
 		html += '<span class="cpo-col-thumb"></span>';
 		html += '<span class="cpo-col-title">Title</span>';
 		html += '<span class="cpo-col-status">Status</span>';
 		html += '<span class="cpo-col-actions"></span>';
 		html += '</div>';
-		html += '<ul id="cpo-sortable" class="cpo-sortable">';
+		html += '<ul id="cpo-sortable" class="cpo-sortable' + (isLatest ? ' cpo-sortable-locked' : '') + '">';
 
 		items.forEach(function (item, index) {
 			var thumb = item.thumbnail
 				? '<img src="' + item.thumbnail + '" alt="" />'
 				: '<span class="cpo-no-thumb dashicons dashicons-format-image"></span>';
 
+			var handleInner = isLatest
+				? '<span class="cpo-order-num">' + (index + 1) + '</span>'
+				: '<span class="cpo-order-num">' + (index + 1) + '</span><span class="dashicons dashicons-menu cpo-drag-icon"></span>';
+
 			html += '<li class="cpo-item" data-id="' + item.id + '" data-date="' + (item.date || '') + '">';
-			html += '<span class="cpo-col-order cpo-handle"><span class="cpo-order-num">' + (index + 1) + '</span><span class="dashicons dashicons-menu cpo-drag-icon"></span></span>';
+			html += '<span class="cpo-col-order' + (isLatest ? '' : ' cpo-handle') + '">' + handleInner + '</span>';
 			html += '<span class="cpo-col-thumb">' + thumb + '</span>';
 			html += '<span class="cpo-col-title">' + escHtml(item.title) + '</span>';
 			html += '<span class="cpo-col-status"><span class="cpo-status-badge cpo-status-' + item.status + '">' + item.status + '</span></span>';
@@ -214,15 +235,21 @@
 		});
 
 		html += '</ul>';
-		html += '<div class="cpo-actions">';
-		html += '<button type="button" id="cpo-sort-az" class="button button-secondary"><span class="dashicons dashicons-sort" style="vertical-align:middle;margin-right:4px;"></span>Sort A–Z</button>';
-		html += '<button type="button" id="cpo-sort-date" class="button button-secondary"><span class="dashicons dashicons-calendar-alt" style="vertical-align:middle;margin-right:4px;"></span>Sort by Date</button>';
-		html += '<button type="button" id="cpo-save-order" class="button button-primary">Save Order</button>';
-		html += '<span id="cpo-save-spinner" class="spinner" style="float:none;"></span>';
-		html += '</div>';
+
+		if (!isLatest) {
+			html += '<div class="cpo-actions">';
+			html += '<button type="button" id="cpo-sort-az" class="button button-secondary"><span class="dashicons dashicons-sort" style="vertical-align:middle;margin-right:4px;"></span>Sort A–Z</button>';
+			html += '<button type="button" id="cpo-sort-date" class="button button-secondary"><span class="dashicons dashicons-calendar-alt" style="vertical-align:middle;margin-right:4px;"></span>Sort by Date</button>';
+			html += '<button type="button" id="cpo-save-order" class="button button-primary">Save Order</button>';
+			html += '<span id="cpo-save-spinner" class="spinner" style="float:none;"></span>';
+			html += '</div>';
+		}
 
 		$wrapper.html(html);
-		initSortable();
+
+		if (!isLatest) {
+			initSortable();
+		}
 	}
 
 	/**
@@ -329,6 +356,55 @@
 			showStatus('Request failed. Please try again.', 'error');
 		});
 	}
+
+	/**
+	 * Persist an ordering mode change ('custom' | 'latest') for the current
+	 * term (scope 'term') or site-wide (scope 'global'), then reload the list.
+	 */
+	function saveOrderMode(scope, mode, $spinner) {
+		var data = {
+			action: 'cpo_save_order_mode',
+			nonce:  cpoData.nonce,
+			scope:  scope,
+			mode:   mode
+		};
+
+		if (scope === 'term') {
+			if (!currentTerm) { return; }
+			data.term_id = currentTerm;
+		}
+
+		if ($spinner) { $spinner.addClass('is-active'); }
+
+		$.post(cpoData.ajaxUrl, data, function (response) {
+			if ($spinner) { $spinner.removeClass('is-active'); }
+
+			if (response.success) {
+				showStatus(response.data.message, 'success');
+				// Reload the current list so ordering + controls reflect the change.
+				if (currentTerm) {
+					loadItems();
+				}
+			} else {
+				showStatus((response.data && response.data.message) ? response.data.message : 'Error saving option.', 'error');
+			}
+		}).fail(function () {
+			if ($spinner) { $spinner.removeClass('is-active'); }
+			showStatus('Request failed. Please try again.', 'error');
+		});
+	}
+
+	// Per-category "order by latest" toggle (delegated — list is re-rendered).
+	$wrapper.on('change', '#cpo-latest-toggle', function () {
+		var mode = $(this).is(':checked') ? 'latest' : 'custom';
+		saveOrderMode('term', mode, $('#cpo-mode-spinner'));
+	});
+
+	// Site-wide default "order by latest" toggle.
+	$('#cpo-global-latest').on('change', function () {
+		var mode = $(this).is(':checked') ? 'latest' : 'custom';
+		saveOrderMode('global', mode, $('#cpo-global-mode-spinner'));
+	});
 
 	// ─── Grid Preview Modal ──────────────────────────────────────────────────
 

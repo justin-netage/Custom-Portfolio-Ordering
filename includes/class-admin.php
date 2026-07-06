@@ -18,6 +18,7 @@ class CPO_Admin {
 		add_action( 'admin_menu', array( $this, 'add_menu_page' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_assets' ) );
 		add_action( 'wp_ajax_cpo_save_order', array( $this, 'ajax_save_order' ) );
+		add_action( 'wp_ajax_cpo_save_order_mode', array( $this, 'ajax_save_order_mode' ) );
 		add_action( 'wp_ajax_cpo_get_items', array( $this, 'ajax_get_items' ) );
 		add_action( 'wp_ajax_cpo_import_start', array( $this, 'ajax_import_start' ) );
 		add_action( 'wp_ajax_cpo_import_chunk', array( $this, 'ajax_import_chunk' ) );
@@ -369,6 +370,15 @@ class CPO_Admin {
 				</button>
 			</div>
 
+			<div class="cpo-global-mode">
+				<label>
+					<input type="checkbox" id="cpo-global-latest" <?php checked( 'latest', get_option( 'cpo_global_order_mode', 'custom' ) ); ?> />
+					<?php esc_html_e( 'Order all categories by latest (newest first) by default', 'custom-portfolio-ordering' ); ?>
+				</label>
+				<span class="description"><?php esc_html_e( 'Individual categories can override this below.', 'custom-portfolio-ordering' ); ?></span>
+				<span id="cpo-global-mode-spinner" class="spinner" style="float:none;"></span>
+			</div>
+
 			<div id="cpo-status" class="cpo-status"></div>
 
 			<div id="cpo-list-wrapper">
@@ -457,6 +467,8 @@ class CPO_Admin {
 		$query = new WP_Query( $args );
 		$items = array();
 
+		$order_mode = CPO_Frontend::get_order_mode( $term_id );
+
 		// Separate items with and without order, sort properly.
 		$ordered   = array();
 		$unordered = array();
@@ -479,21 +491,30 @@ class CPO_Admin {
 			}
 		}
 
-		// Sort ordered items by their order value.
-		usort( $ordered, function ( $a, $b ) {
-			return $a['order'] - $b['order'];
-		} );
+		if ( 'latest' === $order_mode ) {
+			// Latest mode: every item ordered by publish date, newest first.
+			$items = array_merge( $ordered, $unordered );
+			usort( $items, function ( $a, $b ) {
+				return strcmp( $b['date'], $a['date'] );
+			} );
+		} else {
+			// Custom mode: unsaved (newly added) items float to the top, newest
+			// first; ordered items follow in their saved sequence.
+			usort( $ordered, function ( $a, $b ) {
+				return $a['order'] - $b['order'];
+			} );
 
-		// Append unordered items at the end (sorted by title).
-		usort( $unordered, function ( $a, $b ) {
-			return strcasecmp( $a['title'], $b['title'] );
-		} );
+			usort( $unordered, function ( $a, $b ) {
+				return strcmp( $b['date'], $a['date'] );
+			} );
 
-		$items = array_merge( $ordered, $unordered );
+			$items = array_merge( $unordered, $ordered );
+		}
 
 		// If this term has never been explicitly ordered, auto-save the current display
 		// order so the frontend applies a consistent sequence from the very first load.
-		if ( ! get_option( 'cpo_ordered_term_' . $term_id ) && ! empty( $items ) ) {
+		// (Skipped in "latest" mode, which is date-driven and needs no saved order.)
+		if ( 'latest' !== $order_mode && ! get_option( 'cpo_ordered_term_' . $term_id ) && ! empty( $items ) ) {
 			foreach ( $items as $position => $item ) {
 				update_post_meta( $item['id'], $meta_key, $position );
 				$items[ $position ]['order'] = $position;
@@ -502,9 +523,10 @@ class CPO_Admin {
 		}
 
 		wp_send_json_success( array(
-			'items'    => $items,
-			'term_id'  => $term_id,
-			'taxonomy' => $taxonomy,
+			'items'      => $items,
+			'term_id'    => $term_id,
+			'taxonomy'   => $taxonomy,
+			'order_mode' => $order_mode,
 		) );
 	}
 
@@ -579,6 +601,64 @@ class CPO_Admin {
 				__( 'Order saved for %d items.', 'custom-portfolio-ordering' ),
 				count( $order )
 			),
+		) );
+	}
+
+	/**
+	 * AJAX: Save the ordering mode ('custom' or 'latest').
+	 *
+	 * Scope 'global' sets the site-wide default; scope 'term' sets an override
+	 * for a single term (an empty mode clears the override so the term falls
+	 * back to the global default).
+	 */
+	public function ajax_save_order_mode() {
+		check_ajax_referer( 'cpo_sort_nonce', 'nonce' );
+
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			wp_send_json_error( 'Unauthorized' );
+		}
+
+		$scope = sanitize_key( $_POST['scope'] ?? 'term' );
+		$mode  = sanitize_key( $_POST['mode'] ?? '' );
+
+		if ( ! in_array( $mode, array( 'custom', 'latest', '' ), true ) ) {
+			wp_send_json_error( 'Invalid mode' );
+		}
+
+		if ( 'global' === $scope ) {
+			update_option( 'cpo_global_order_mode', 'latest' === $mode ? 'latest' : 'custom' );
+
+			wp_send_json_success( array(
+				'message' => 'latest' === $mode
+					? __( 'All categories now order by latest by default.', 'custom-portfolio-ordering' )
+					: __( 'All categories now use their custom order by default.', 'custom-portfolio-ordering' ),
+				'scope'   => 'global',
+				'mode'    => 'latest' === $mode ? 'latest' : 'custom',
+			) );
+		}
+
+		$term_id = absint( $_POST['term_id'] ?? 0 );
+
+		if ( empty( $term_id ) ) {
+			wp_send_json_error( 'Missing parameters' );
+		}
+
+		if ( '' === $mode ) {
+			// Clear the per-term override; fall back to the global default.
+			delete_option( 'cpo_order_mode_' . $term_id );
+			$effective = CPO_Frontend::get_order_mode( $term_id );
+		} else {
+			update_option( 'cpo_order_mode_' . $term_id, $mode );
+			$effective = $mode;
+		}
+
+		wp_send_json_success( array(
+			'message'    => 'latest' === $effective
+				? __( 'This category now orders by latest (newest first).', 'custom-portfolio-ordering' )
+				: __( 'This category now uses its custom order.', 'custom-portfolio-ordering' ),
+			'scope'      => 'term',
+			'term_id'    => $term_id,
+			'order_mode' => $effective,
 		) );
 	}
 

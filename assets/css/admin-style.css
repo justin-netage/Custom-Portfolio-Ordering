@@ -100,6 +100,65 @@
 	flex-shrink: 0;
 }
 
+.cpo-notice-info {
+	background: #e5f2ff;
+	border: 1px solid #7cb9f0;
+	color: #10457a;
+}
+
+.cpo-notice-info .dashicons {
+	color: #2271b1;
+	font-size: 18px;
+	width: 18px;
+	height: 18px;
+	flex-shrink: 0;
+}
+
+/* Ordering-mode toggles (site-wide default + per-category) */
+.cpo-global-mode {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+	margin: -8px 0 20px;
+	padding: 10px 15px;
+	background: #fff;
+	border: 1px solid #ccd0d4;
+	border-radius: 4px;
+	font-size: 13px;
+}
+
+.cpo-global-mode label,
+.cpo-mode-toggle label {
+	font-weight: 600;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.cpo-global-mode .description,
+.cpo-mode-toggle .description {
+	color: #646970;
+	font-weight: 400;
+}
+
+.cpo-mode-toggle {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+	margin-bottom: 14px;
+	padding: 10px 14px;
+	background: #f6f7f7;
+	border: 1px solid #dcdcde;
+	border-radius: 4px;
+	font-size: 13px;
+}
+
+/* When a category orders by latest, the list is read-only. */
+.cpo-sortable-locked .cpo-col-order {
+	cursor: default;
+}
+
 /* Item-count badge (neutral grey, used in grid sub-cat list) */
 .cpo-status-count {
 	background: #e2e4e7;
