@@ -273,6 +273,14 @@
 	text-align: center;
 }
 
+.cpo-col-date {
+	width: 110px;
+	flex-shrink: 0;
+	text-align: center;
+	font-size: 12px;
+	color: #646970;
+}
+
 /* Handle / drag area */
 .cpo-handle {
 	cursor: grab;
@@ -489,7 +497,8 @@
 		width: 100%;
 	}
 
-	.cpo-col-status {
+	.cpo-col-status,
+	.cpo-col-date {
 		display: none;
 	}
 }
